@@ -1,4 +1,9 @@
-use gcloud_sdk::google_rest_apis::compute_v1;
+use gcloud_sdk::google_rest_apis::compute_v1::instances_api::{
+    compute_instances_insert, ComputePeriodInstancesPeriodInsertParams,
+};
+use gcloud_sdk::google_rest_apis::compute_v1::machine_images_api::{
+    compute_machine_images_list, ComputePeriodMachineImagesPeriodListParams,
+};
 use tracing::info;
 use virt::connect::Connect;
 use virt::domain::Domain;
@@ -15,14 +20,60 @@ async fn main() {
     )
 }
 
+async fn get_zone() -> String {
+    #[cfg(test)]
+    return "europe-west1-b".into();
+    #[cfg(not(test))]
+    {
+        let client = reqwest::Client::new();
+        let response = client
+            .get("http://metadata.google.internal/computeMetadata/v1/instance/zone")
+            .header("Metadata-Flavor", "Google")
+            .send()
+            .await
+            .unwrap();
+        response
+            .text()
+            .await
+            .unwrap()
+            .split('/')
+            .last()
+            .unwrap()
+            .to_string()
+    }
+}
+
 async fn create_instance_using_image() {
-    let project_id = gcloud_sdk::GoogleEnvironment::detect_google_project_id()
+    let zone = get_zone().await;
+    let project = gcloud_sdk::GoogleEnvironment::detect_google_project_id()
         .await
         .unwrap();
     let client = gcloud_sdk::GoogleRestApi::new().await.unwrap();
     let compute_v1_config = client.create_google_compute_v1_config().await.unwrap();
-    // TODO: FInd out method to create instance using image
-    // let new_instance = compute_v1::instances_api::
+    let machine_images = compute_machine_images_list(
+        &compute_v1_config,
+        ComputePeriodMachineImagesPeriodListParams {
+            project: project.clone(),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap()
+    .items
+    .unwrap();
+    let machine_image = machine_images.first().unwrap();
+    let instance = compute_instances_insert(
+        &compute_v1_config,
+        ComputePeriodInstancesPeriodInsertParams {
+            project,
+            zone,
+            source_machine_image: Some(machine_image.id.as_ref().unwrap().to_string()),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    info!("Instance created: {:?}", instance);
 }
 
 fn migrate(src_uri: Option<String>, dst_uri: Option<String>, dname: &str) {
@@ -60,4 +111,15 @@ fn migrate(src_uri: Option<String>, dst_uri: Option<String>, dname: &str) {
         panic!("Failed to disconnect from hypervisor: {}", e);
     }
     println!("Disconnected from source hypervisor");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_create_instance_using_image() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(create_instance_using_image());
+    }
 }
