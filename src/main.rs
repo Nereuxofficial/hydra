@@ -1,9 +1,15 @@
+use dotenvy::dotenv;
 use gcloud_sdk::google_rest_apis::compute_v1::instances_api::{
     compute_instances_insert, ComputePeriodInstancesPeriodInsertParams,
 };
 use gcloud_sdk::google_rest_apis::compute_v1::machine_images_api::{
     compute_machine_images_list, ComputePeriodMachineImagesPeriodListParams,
 };
+use gcloud_sdk::google_rest_apis::compute_v1::scheduling::{
+    InstanceTerminationAction, OnHostMaintenance, ProvisioningModel,
+};
+use gcloud_sdk::google_rest_apis::compute_v1::{Instance, Scheduling};
+use rand::{thread_rng, Rng};
 use tracing::info;
 use virt::connect::Connect;
 use virt::domain::Domain;
@@ -11,43 +17,41 @@ use virt::sys;
 
 #[tokio::main(worker_threads = 2)]
 async fn main() {
+    dotenv().unwrap();
     tracing_subscriber::fmt::init();
     info!("Migration starting... Requesting new machine to be started...");
+    create_instance_using_image().await;
     migrate(
-        Some("qemu:///system".into()),
+        Some("qemu:///session".into()),
         Some("ssh+qemu://192.168.0.1/system".into()),
         "example-vm",
     )
 }
 
-async fn get_zone() -> String {
-    #[cfg(test)]
-    return "europe-west1-b".into();
-    #[cfg(not(test))]
-    {
-        let client = reqwest::Client::new();
-        let response = client
-            .get("http://metadata.google.internal/computeMetadata/v1/instance/zone")
-            .header("Metadata-Flavor", "Google")
-            .send()
-            .await
-            .unwrap();
-        response
-            .text()
-            .await
-            .unwrap()
-            .split('/')
-            .last()
-            .unwrap()
-            .to_string()
-    }
+async fn get_zone() -> Result<String, reqwest::Error> {
+    let client = reqwest::Client::new();
+    let response = client
+        .get("http://metadata.google.internal/computeMetadata/v1/instance/zone")
+        .header("Metadata-Flavor", "Google")
+        .send()
+        .await?;
+    Ok(response
+        .text()
+        .await?
+        .split('/')
+        .last()
+        .unwrap()
+        .to_string())
 }
 
-async fn create_instance_using_image() {
-    let zone = get_zone().await;
+async fn create_instance_with_image() {
+    let mut rng = thread_rng();
+    let zone = get_zone()
+        .await
+        .unwrap_or_else(|_| std::env::var("ZONE").unwrap());
     let project = gcloud_sdk::GoogleEnvironment::detect_google_project_id()
         .await
-        .unwrap();
+        .unwrap_or_else(|| std::env::var("GCP_PROJECT").unwrap());
     info!(
         "Creating instance in project '{}' and zone '{}'",
         project, zone
@@ -66,12 +70,29 @@ async fn create_instance_using_image() {
     .items
     .unwrap();
     let machine_image = machine_images.first().unwrap();
+    info!("Machine image: {:?}", machine_image);
     let instance = compute_instances_insert(
         &compute_v1_config,
         ComputePeriodInstancesPeriodInsertParams {
-            project,
+            project: project.clone(),
             zone,
-            source_machine_image: Some(machine_image.id.as_ref().unwrap().to_string()),
+            source_machine_image: Some(format!(
+                "projects/{}/global/machineImages/{}",
+                project,
+                machine_image.name.as_ref().unwrap()
+            )),
+            instance: Some(Instance {
+                name: Some(format!("nested-qemu-{}", rng.gen::<u32>())),
+                scheduling: Some(Box::new(Scheduling {
+                    preemptible: Some(false),
+                    provisioning_model: Some(ProvisioningModel::Standard),
+                    on_host_maintenance: Some(OnHostMaintenance::Terminate),
+                    automatic_restart: Some(false),
+                    instance_termination_action: None,
+                    ..Default::default()
+                })),
+                ..Default::default()
+            }),
             ..Default::default()
         },
     )
