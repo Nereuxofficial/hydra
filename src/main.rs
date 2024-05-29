@@ -121,9 +121,9 @@ fn migrate(src_uri: Option<String>, dst_uri: Option<String>, dname: &str) {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_create_instance_using_image() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(create_instance_using_image());
+    #[tokio::test]
+    async fn test_create_instance_using_image() {
+        tracing_subscriber::fmt::init();
+        create_instance_using_image().await;
     }
 }
