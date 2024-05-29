@@ -48,6 +48,10 @@ async fn create_instance_using_image() {
     let project = gcloud_sdk::GoogleEnvironment::detect_google_project_id()
         .await
         .unwrap();
+    info!(
+        "Creating instance in project '{}' and zone '{}'",
+        project, zone
+    );
     let client = gcloud_sdk::GoogleRestApi::new().await.unwrap();
     let compute_v1_config = client.create_google_compute_v1_config().await.unwrap();
     let machine_images = compute_machine_images_list(
