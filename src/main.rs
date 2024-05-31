@@ -20,7 +20,7 @@ async fn main() {
     dotenv().unwrap();
     tracing_subscriber::fmt::init();
     info!("Migration starting... Requesting new machine to be started...");
-    create_instance_using_image().await;
+    create_instance_with_image().await;
     migrate(
         Some("qemu:///session".into()),
         Some("ssh+qemu://192.168.0.1/system".into()),
@@ -70,7 +70,7 @@ async fn create_instance_with_image() {
     .items
     .unwrap();
     let machine_image = machine_images.first().unwrap();
-    info!("Machine image: {:?}", machine_image);
+    info!("Machine image: {:?}", machine_image.name.clone());
     let instance = compute_instances_insert(
         &compute_v1_config,
         ComputePeriodInstancesPeriodInsertParams {
@@ -86,8 +86,6 @@ async fn create_instance_with_image() {
                 scheduling: Some(Box::new(Scheduling {
                     preemptible: Some(false),
                     provisioning_model: Some(ProvisioningModel::Standard),
-                    on_host_maintenance: Some(OnHostMaintenance::Terminate),
-                    automatic_restart: Some(false),
                     instance_termination_action: None,
                     ..Default::default()
                 })),
