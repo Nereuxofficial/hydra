@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 dotenvy = "0.15.7"
-gcloud-sdk = { version = "0.24.6", features = ["google-rest-compute-v1", "tls-webpki-roots"] }
+gcloud-sdk = { git = "https://github.com/abdolence/gcloud-sdk-rs/", rev = "d010e1b6dcf5d8abafefa35498f6aaa41eef29e0", features = ["google-rest-compute-v1", "tls-webpki-roots"] }
 rand = "0.8.5"
 reqwest = { version = "0.12.4", features = ["rustls-tls"], default-features = false }
 tokio = { version = "1.38.0", features = ["full"] }

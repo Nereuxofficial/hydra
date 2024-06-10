@@ -86,7 +86,7 @@ async fn create_instance_with_image() {
                 scheduling: Some(Box::new(Scheduling {
                     preemptible: Some(false),
                     provisioning_model: Some(ProvisioningModel::Standard),
-                    instance_termination_action: None,
+                    instance_termination_action: Some(None),
                     ..Default::default()
                 })),
                 ..Default::default()
@@ -143,6 +143,6 @@ mod tests {
     #[tokio::test]
     async fn test_create_instance_using_image() {
         tracing_subscriber::fmt::init();
-        create_instance_using_image().await;
+        create_instance_with_image().await;
     }
 }
