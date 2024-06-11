@@ -193,7 +193,7 @@ fn migrate(src_uri: Option<String>, dst_uri: Option<String>, dname: &str) {
         dname, src_uri, dst_uri
     );
 
-    let mut conn = match Connect::open(src_uri.as_deref()) {
+    let mut conn = match Connect::open(src_uri.as_deref().unwrap()) {
         Ok(c) => c,
         Err(e) => panic!("No connection to source hypervisor: {}", e),
     };
@@ -201,11 +201,11 @@ fn migrate(src_uri: Option<String>, dst_uri: Option<String>, dname: &str) {
     if let Ok(dom) = Domain::lookup_by_name(&conn, &dname) {
         let flags = sys::VIR_MIGRATE_LIVE | sys::VIR_MIGRATE_PEER2PEER | sys::VIR_MIGRATE_TUNNELLED;
         if dom
-            .migrate(&conn, flags, None, dst_uri.as_deref(), 0)
+            .migrate(&conn, flags, dst_uri.as_deref().unwrap(), 0)
             .is_ok()
         {
             println!("Domain migrated");
-
+            /*
             if let Ok(job_stats) = dom.get_job_stats(sys::VIR_DOMAIN_JOB_STATS_COMPLETED) {
                 println!(
                     "Migration completed in {}ms",
@@ -215,6 +215,7 @@ fn migrate(src_uri: Option<String>, dst_uri: Option<String>, dname: &str) {
                         .unwrap_or("?".into())
                 );
             }
+            */
         }
     }
 

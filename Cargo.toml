@@ -12,4 +12,5 @@ serde_json = "1.0.117"
 tokio = { version = "1.38.0", features = ["full"] }
 tracing = "0.1.40"
 tracing-subscriber = "0.3.18"
-virt = { git = "https://gitlab.com/libvirt/libvirt-rust", rev = "3d2cc34fa75ecd6f6e8121cdc6c99687b62d2a4f", features = ["qemu"] }
+# virt = { git = "https://gitlab.com/libvirt/libvirt-rust", rev = "3d2cc34fa75ecd6f6e8121cdc6c99687b62d2a4f", features = ["qemu"] }
+virt = "0.3.1"
