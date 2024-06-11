@@ -11,8 +11,9 @@ use gcloud_sdk::google_rest_apis::compute_v1::scheduling::{
     InstanceTerminationAction, OnHostMaintenance, ProvisioningModel,
 };
 use gcloud_sdk::google_rest_apis::compute_v1::{Instance, MetadataItemsInner, Scheduling};
-use gcloud_sdk::GoogleRestApi;
+use gcloud_sdk::{GoogleRestApi, TokenSourceType, GCP_DEFAULT_SCOPES};
 use rand::{thread_rng, Rng};
+use std::env;
 use std::fmt::Debug;
 use std::fs::read_to_string;
 use std::net::{IpAddr, Ipv4Addr};
@@ -23,7 +24,7 @@ use virt::connect::Connect;
 use virt::domain::Domain;
 use virt::sys;
 
-#[tokio::main(worker_threads = 2)]
+#[tokio::main]
 async fn main() {
     dotenv().unwrap();
     tracing_subscriber::fmt::init();
@@ -71,7 +72,12 @@ async fn create_instance_with_image() -> IpAddr {
         "Creating operation in project '{}' and zone '{}'",
         project, zone
     );
-    let client = gcloud_sdk::GoogleRestApi::new().await.unwrap();
+    let client = gcloud_sdk::GoogleRestApi::with_token_source(
+        TokenSourceType::Json(read_to_string(".key.json").unwrap()),
+        GCP_DEFAULT_SCOPES.clone(),
+    )
+    .await
+    .unwrap();
     let compute_v1_config = client.create_google_compute_v1_config().await.unwrap();
     let mut machine_images = compute_machine_images_list(
         &compute_v1_config,
