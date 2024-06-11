@@ -474,6 +474,7 @@ dependencies = [
  "gcloud-sdk",
  "rand",
  "reqwest 0.12.4",
+ "serde_json",
  "tokio",
  "tracing",
  "tracing-subscriber",
