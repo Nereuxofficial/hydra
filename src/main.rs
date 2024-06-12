@@ -33,7 +33,7 @@ async fn main() {
     let ip_address = create_instance_with_image().await;
     migrate(
         Some("qemu:///session".into()),
-        Some(format!("ssh+qemu://{}/session", ip_address)),
+        Some(format!("ssh://{}/session", ip_address)),
         "example-vm",
     );
     let duration = start.elapsed();
