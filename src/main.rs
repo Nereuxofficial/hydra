@@ -1,20 +1,15 @@
 use dotenvy::dotenv;
-use gcloud_sdk::google_rest_apis::compute_v1::configuration::Configuration;
 use gcloud_sdk::google_rest_apis::compute_v1::instances_api::{
-    compute_instances_get, compute_instances_insert, compute_instances_set_metadata,
-    ComputePeriodInstancesPeriodGetParams, ComputePeriodInstancesPeriodInsertParams,
+    compute_instances_get, compute_instances_insert, ComputePeriodInstancesPeriodGetParams,
+    ComputePeriodInstancesPeriodInsertParams,
 };
 use gcloud_sdk::google_rest_apis::compute_v1::machine_images_api::{
     compute_machine_images_list, ComputePeriodMachineImagesPeriodListParams,
 };
-use gcloud_sdk::google_rest_apis::compute_v1::scheduling::{
-    InstanceTerminationAction, OnHostMaintenance, ProvisioningModel,
-};
-use gcloud_sdk::google_rest_apis::compute_v1::{Instance, MetadataItemsInner, Scheduling};
-use gcloud_sdk::{GoogleRestApi, TokenSourceType, GCP_DEFAULT_SCOPES};
+use gcloud_sdk::google_rest_apis::compute_v1::scheduling::ProvisioningModel;
+use gcloud_sdk::google_rest_apis::compute_v1::{Instance, Metadata, Scheduling};
+use gcloud_sdk::{TokenSourceType, GCP_DEFAULT_SCOPES};
 use rand::{thread_rng, Rng};
-use std::env;
-use std::fmt::Debug;
 use std::fs::read_to_string;
 use std::net::{IpAddr, Ipv4Addr};
 use std::str::FromStr;
@@ -93,11 +88,9 @@ async fn create_instance_with_image() -> IpAddr {
     .unwrap();
     let mut machine_image = machine_images.first_mut().unwrap();
     info!("Machine image: {:?}", machine_image.name.clone());
+    let mut properties = machine_image.instance_properties.as_ref().unwrap().clone();
     // Edit the metadata to add our machine's ssh public key while preserving the previous ssh keys
-    let mut metadata_items = machine_image
-        .instance_properties
-        .as_mut()
-        .unwrap()
+    let mut metadata_items = properties
         .metadata
         .as_mut()
         .unwrap()
@@ -131,6 +124,25 @@ async fn create_instance_with_image() -> IpAddr {
                     provisioning_model: Some(ProvisioningModel::Standard),
                     instance_termination_action: Some(None),
                     ..Default::default()
+                })),
+                metadata: Some(Box::new(Metadata {
+                    fingerprint: machine_image
+                        .clone()
+                        .instance_properties
+                        .unwrap()
+                        .metadata
+                        .unwrap()
+                        .fingerprint
+                        .clone(),
+                    items: Some(metadata_items.clone()),
+                    kind: machine_image
+                        .clone()
+                        .instance_properties
+                        .unwrap()
+                        .metadata
+                        .unwrap()
+                        .kind
+                        .clone(),
                 })),
                 ..Default::default()
             }),
