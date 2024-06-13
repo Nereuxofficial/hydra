@@ -28,6 +28,7 @@ use virt::sys;
 async fn main() {
     dotenv().unwrap();
     tracing_subscriber::fmt::init();
+    // TODO: Check if there are any VMs to be migrated first
     info!("Migration starting... Requesting new machine to be started...");
     let start = Instant::now();
     let ip_address = create_instance_with_image().await;
@@ -205,7 +206,8 @@ fn migrate(src_uri: Option<String>, dst_uri: Option<String>, dname: &str) {
     };
 
     if let Ok(dom) = Domain::lookup_by_name(&conn, &dname) {
-        let flags = sys::VIR_MIGRATE_LIVE | sys::VIR_MIGRATE_PEER2PEER | sys::VIR_MIGRATE_TUNNELLED;
+        // TODO: Either use VIR_MIGRATE_TUNNELED or VIR_MIGRATE_TLS for encryption
+        let flags = sys::VIR_MIGRATE_LIVE | sys::VIR_MIGRATE_PEER2PEER;
         if dom
             .migrate(&conn, flags, dst_uri.as_deref().unwrap(), 0)
             .is_ok()
