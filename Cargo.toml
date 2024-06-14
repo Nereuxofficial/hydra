@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+clap = { version = "4.5.7", features = ["derive"] }
 dotenvy = "0.15.7"
 gcloud-sdk = { git = "https://github.com/abdolence/gcloud-sdk-rs/", rev = "d010e1b6dcf5d8abafefa35498f6aaa41eef29e0", features = ["google-rest-compute-v1", "tls-webpki-roots"] }
 rand = "0.8.5"

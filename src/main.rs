@@ -1,3 +1,6 @@
+mod libvirt;
+
+use crate::libvirt::QemuConnection;
 use dotenvy::dotenv;
 use gcloud_sdk::google_rest_apis::compute_v1::instances_api::{
     compute_instances_get, compute_instances_insert, ComputePeriodInstancesPeriodGetParams,
@@ -15,27 +18,22 @@ use std::net::{IpAddr, Ipv4Addr};
 use std::str::FromStr;
 use std::time::Instant;
 use tracing::info;
-use virt::connect::Connect;
-use virt::domain::Domain;
-use virt::sys;
 
 #[tokio::main]
 async fn main() {
     dotenv().unwrap();
     tracing_subscriber::fmt::init();
-    // TODO: Check if there are any VMs to be migrated first
+    let connection = QemuConnection::new();
+    let domains = connection.get_running_vms();
+    assert!(!domains.is_empty(), "No running domains to migrate");
     info!("Migration starting... Requesting new machine to be started...");
     let start = Instant::now();
     let ip_address = create_instance_with_image().await;
-    migrate(
-        Some("qemu:///session".into()),
-        Some(format!("qemu+ssh://{}/session", ip_address)),
-        "example-vm",
-    );
+    connection.migrate(Some(format!("qemu+ssh://{}/system", ip_address)), domains);
     let duration = start.elapsed();
     info!(
-        "Migration completed in {:?}. Time left: {} seconds",
-        duration,
+        "Migration completed in {}. Time left: {} seconds",
+        duration.as_secs(),
         30 - duration.as_secs()
     );
 }
@@ -86,11 +84,11 @@ async fn create_instance_with_image() -> IpAddr {
     .unwrap()
     .items
     .unwrap();
-    let mut machine_image = machine_images.first_mut().unwrap();
+    let machine_image = machine_images.first_mut().unwrap();
     info!("Machine image: {:?}", machine_image.name.clone());
     let mut properties = machine_image.instance_properties.as_ref().unwrap().clone();
     // Edit the metadata to add our machine's ssh public key while preserving the previous ssh keys
-    let mut metadata_items = properties
+    let metadata_items = properties
         .metadata
         .as_mut()
         .unwrap()
@@ -204,45 +202,6 @@ fn get_ssh_key() -> String {
         .iter()
         .find_map(|path| read_to_string(format!("{home_path}/{path}")).ok())
         .unwrap_or_else(|| panic!("Failed to read ssh key"))
-}
-
-fn migrate(src_uri: Option<String>, dst_uri: Option<String>, dname: &str) {
-    println!(
-        "Attempting to migrate domain '{}' from '{:?}' to '{:?}'...",
-        dname, src_uri, dst_uri
-    );
-
-    let mut conn = match Connect::open(src_uri.as_deref().unwrap()) {
-        Ok(c) => c,
-        Err(e) => panic!("No connection to source hypervisor: {}", e),
-    };
-
-    if let Ok(dom) = Domain::lookup_by_name(&conn, &dname) {
-        // TODO: Either use VIR_MIGRATE_TUNNELED or VIR_MIGRATE_TLS for encryption
-        let flags = sys::VIR_MIGRATE_LIVE | sys::VIR_MIGRATE_PEER2PEER;
-        if dom
-            .migrate(&conn, flags, dst_uri.as_deref().unwrap(), 0)
-            .is_ok()
-        {
-            println!("Domain migrated");
-            /*
-            if let Ok(job_stats) = dom.get_job_stats(sys::VIR_DOMAIN_JOB_STATS_COMPLETED) {
-                println!(
-                    "Migration completed in {}ms",
-                    job_stats
-                        .time_elapsed
-                        .map(|time| time.to_string())
-                        .unwrap_or("?".into())
-                );
-            }
-            */
-        }
-    }
-
-    if let Err(e) = conn.close() {
-        panic!("Failed to disconnect from hypervisor: {}", e);
-    }
-    println!("Disconnected from source hypervisor");
 }
 
 #[cfg(test)]
