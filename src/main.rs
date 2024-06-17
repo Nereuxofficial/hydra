@@ -1,6 +1,7 @@
 mod libvirt;
 
 use crate::libvirt::QemuConnection;
+use clap::{Parser, Subcommand};
 use dotenvy::dotenv;
 use gcloud_sdk::google_rest_apis::compute_v1::instances_api::{
     compute_instances_get, compute_instances_insert, ComputePeriodInstancesPeriodGetParams,
@@ -18,24 +19,55 @@ use std::net::{IpAddr, Ipv4Addr};
 use std::str::FromStr;
 use std::time::Instant;
 use tracing::info;
+/// A fictional versioning CLI
+#[derive(Debug, Parser)] // requires `derive` feature
+#[command(name = "hydra")]
+#[command(about = "A tool for VM live-migration", long_about = None)]
+#[command(subcommand_required = false)]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Commands>,
+}
+
+#[derive(Debug, Subcommand)]
+enum Commands {
+    #[command(arg_required_else_help = false)]
+    CreateInstance,
+    #[command(arg_required_else_help = true)]
+    Migrate { remote: String },
+}
 
 #[tokio::main]
 async fn main() {
     dotenv().unwrap();
     tracing_subscriber::fmt::init();
-    let connection = QemuConnection::new();
-    let domains = connection.get_running_vms();
-    assert!(!domains.is_empty(), "No running domains to migrate");
-    info!("Migration starting... Requesting new machine to be started...");
-    let start = Instant::now();
-    let ip_address = create_instance_with_image().await;
-    connection.migrate(Some(format!("qemu+ssh://{}/system", ip_address)), domains);
-    let duration = start.elapsed();
-    info!(
-        "Migration completed in {}. Time left: {} seconds",
-        duration.as_secs(),
-        30 - duration.as_secs()
-    );
+    let args = Cli::parse();
+    match args.command {
+        Some(Commands::CreateInstance) => println!(
+            "Ip Address of new server: {}",
+            create_instance_with_image().await
+        ),
+        Some(Commands::Migrate { remote }) => {
+            let connection = QemuConnection::new();
+            let domains = connection.get_running_vms();
+            connection.migrate(Some(remote), domains);
+        }
+        None => {
+            let connection = QemuConnection::new();
+            let domains = connection.get_running_vms();
+            assert!(!domains.is_empty(), "No running domains to migrate");
+            info!("Migration starting... Requesting new machine to be started...");
+            let start = Instant::now();
+            let ip_address = create_instance_with_image().await;
+            connection.migrate(Some(format!("qemu+ssh://{}/system", ip_address)), domains);
+            let duration = start.elapsed();
+            info!(
+                "Migration completed in {}. Time left: {} seconds",
+                duration.as_secs(),
+                30 - duration.as_secs()
+            );
+        }
+    }
 }
 
 async fn get_zone() -> Result<String, reqwest::Error> {
