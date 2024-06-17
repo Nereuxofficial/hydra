@@ -1,3 +1,4 @@
+use tracing::info;
 use virt::connect::Connect;
 use virt::domain::Domain;
 use virt::sys;
@@ -20,7 +21,13 @@ impl QemuConnection {
             .collect()
     }
 
+    /// Migrate domains to a new URI. This assumes the connection will be successful, so for example
+    /// for ssh our public key should be in the authorized_keys file of the remote machine as well
+    /// as the remote machine's public key in our known_hosts file.
+    ///
+    /// We do not have access to the job stats in 0.3.1 so stdout may show more information about errors.
     pub fn migrate(&self, dst_uri: Option<String>, domains: Vec<Domain>) {
+        // TODO: show information about errors
         if domains.is_empty() {
             println!("No domains specified for migration");
             return;

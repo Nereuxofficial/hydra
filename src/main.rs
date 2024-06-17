@@ -1,6 +1,8 @@
 mod libvirt;
+mod ssh;
 
 use crate::libvirt::QemuConnection;
+use crate::ssh::add_ssh_fingerprint_to_known_hosts;
 use clap::{Parser, Subcommand};
 use dotenvy::dotenv;
 use gcloud_sdk::google_rest_apis::compute_v1::instances_api::{
@@ -19,6 +21,7 @@ use std::net::{IpAddr, Ipv4Addr};
 use std::str::FromStr;
 use std::time::Instant;
 use tracing::info;
+
 /// A fictional versioning CLI
 #[derive(Debug, Parser)] // requires `derive` feature
 #[command(name = "hydra")]
@@ -59,6 +62,7 @@ async fn main() {
             info!("Migration starting... Requesting new machine to be started...");
             let start = Instant::now();
             let ip_address = create_instance_with_image().await;
+            add_ssh_fingerprint_to_known_hosts(ip_address).unwrap();
             connection.migrate(Some(format!("qemu+ssh://{}/system", ip_address)), domains);
             let duration = start.elapsed();
             info!(
@@ -86,6 +90,8 @@ async fn get_zone() -> Result<String, reqwest::Error> {
         .to_string())
 }
 
+/// Creates a new instance using the first machine image it finds. It also adds the ssh key to the
+/// metadata of the new instance to allow for migration.
 async fn create_instance_with_image() -> IpAddr {
     let mut rng = thread_rng();
     let zone = get_zone()
@@ -116,6 +122,7 @@ async fn create_instance_with_image() -> IpAddr {
     .unwrap()
     .items
     .unwrap();
+    // TODO: We need a way to provide one via env optimally
     let machine_image = machine_images.first_mut().unwrap();
     info!("Machine image: {:?}", machine_image.name.clone());
     let mut properties = machine_image.instance_properties.as_ref().unwrap().clone();
@@ -224,16 +231,6 @@ async fn create_instance_with_image() -> IpAddr {
         Ipv4Addr::from_str(&internal_ip_address)
             .unwrap_or_else(|_| panic!("Failed to parse ip address: {}", internal_ip_address)),
     );
-}
-
-fn get_ssh_key() -> String {
-    let home_path =
-        std::env::var("HOME").expect("HOME not found in environment. Please provide a home path");
-    let paths = ["/.ssh/id_rsa.pub", "/.ssh/id_ed25519.pub"];
-    paths
-        .iter()
-        .find_map(|path| read_to_string(format!("{home_path}/{path}")).ok())
-        .unwrap_or_else(|| panic!("Failed to read ssh key"))
 }
 
 #[cfg(test)]
