@@ -2,7 +2,7 @@ mod libvirt;
 mod ssh;
 
 use crate::libvirt::QemuConnection;
-use crate::ssh::add_ssh_fingerprint_to_known_hosts;
+use crate::ssh::{add_ssh_fingerprint_to_known_hosts, get_ssh_key};
 use clap::{Parser, Subcommand};
 use dotenvy::dotenv;
 use gcloud_sdk::google_rest_apis::compute_v1::instances_api::{

@@ -1,5 +1,6 @@
 use std::fs::read_to_string;
 use std::io::Read;
+use std::io::Write;
 use std::net::IpAddr;
 
 /// Adds the ssh fingerprint to known_hosts to pass the fingerprint verification securely. The new
@@ -19,12 +20,7 @@ pub fn add_ssh_fingerprint_to_known_hosts(
     let parts = public_key.split_whitespace().collect::<Vec<&str>>();
     // Since the format is different we need to convert it to the format of known_hosts
     // which is: "ip_address type public_key"
-    let fingerprint = format!(
-        "{} {} {}",
-        ip_address,
-        parts[0]
-        parts[1]
-    );
+    let fingerprint = format!("{} {} {}", ip_address, parts[0], parts[1]);
     if contents.contains(&fingerprint) {
         return Ok(());
     }
@@ -32,7 +28,7 @@ pub fn add_ssh_fingerprint_to_known_hosts(
     Ok(())
 }
 
-fn get_ssh_key() -> String {
+pub fn get_ssh_key() -> String {
     let home_path =
         std::env::var("HOME").expect("HOME not found in environment. Please provide a home path");
     let paths = ["/.ssh/id_rsa.pub", "/.ssh/id_ed25519.pub"];
