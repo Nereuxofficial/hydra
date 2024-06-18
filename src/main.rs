@@ -63,10 +63,10 @@ async fn main() {
             let start = Instant::now();
             let ip_address = create_instance_with_image().await;
             add_ssh_fingerprint_to_known_hosts(ip_address).unwrap();
-            connection.migrate(Some(format!("qemu+ssh://{}/system", ip_address)), domains);
+            connection.migrate(Some(format!("qemu+ssh://{}/session", ip_address)), domains);
             let duration = start.elapsed();
             info!(
-                "Migration completed in {}. Time left: {} seconds",
+                "Migration completed in {}s. Time left: {} seconds",
                 duration.as_secs(),
                 30 - duration.as_secs()
             );
