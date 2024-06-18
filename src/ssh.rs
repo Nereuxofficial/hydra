@@ -1,3 +1,4 @@
+use std::env;
 use std::fs::read_to_string;
 use std::io::Read;
 use std::io::Write;
@@ -13,7 +14,7 @@ pub fn add_ssh_fingerprint_to_known_hosts(
         .read(true)
         .write(true)
         .create(true)
-        .open("/home/runner/.ssh/known_hosts")?;
+        .open(format!("{}/.ssh/known_hosts", get_home()))?;
     let mut contents = String::new();
     known_hosts.read_to_string(&mut contents)?;
     let public_key = get_ssh_key();
@@ -29,11 +30,14 @@ pub fn add_ssh_fingerprint_to_known_hosts(
 }
 
 pub fn get_ssh_key() -> String {
-    let home_path =
-        std::env::var("HOME").expect("HOME not found in environment. Please provide a home path");
+    let home_path = get_home();
     let paths = ["/.ssh/id_rsa.pub", "/.ssh/id_ed25519.pub"];
     paths
         .iter()
         .find_map(|path| read_to_string(format!("{home_path}/{path}")).ok())
         .unwrap_or_else(|| panic!("Failed to read ssh key"))
+}
+
+fn get_home() -> String {
+    env::var("HOME").expect("HOME not found in environment. Please provide a home path")
 }
