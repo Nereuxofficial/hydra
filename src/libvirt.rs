@@ -1,6 +1,6 @@
-use tracing::info;
 use virt::connect::Connect;
 use virt::domain::Domain;
+use virt::error::Error;
 use virt::sys;
 
 pub struct QemuConnection {
@@ -44,7 +44,8 @@ impl QemuConnection {
                 .migrate(&self.connection, flags, dst_uri.as_deref().unwrap(), 0)
                 .is_ok()
             {
-                println!("Domain {:?} migrated", dom.get_name());
+                println!("Domain {:?} probably migrated", dom.get_name());
+                println!("Last Error: {}", Error::last_error());
                 /* DOES NOT WORK IN THIS VERSION. TODO: Hide behind feature flag
                 if let Ok(job_stats) = dom.get_job_stats(sys::VIR_DOMAIN_JOB_STATS_COMPLETED) {
                     println!(

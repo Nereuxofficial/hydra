@@ -7,6 +7,7 @@ use std::net::IpAddr;
 /// Adds the ssh fingerprint to known_hosts to pass the fingerprint verification securely. The new
 /// instance will have the same fingerprint as ours because it is built from the machine image of
 /// the current instance.
+#[allow(unused)]
 pub fn add_ssh_fingerprint_to_known_hosts(
     ip_address: IpAddr,
 ) -> Result<(), Box<dyn std::error::Error>> {

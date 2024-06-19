@@ -22,8 +22,8 @@ use std::str::FromStr;
 use std::time::Instant;
 use tracing::info;
 
-/// A fictional versioning CLI
-#[derive(Debug, Parser)] // requires `derive` feature
+///  The CLI interface of hydra to allow for either only migrating or creating a new instance
+#[derive(Debug, Parser)]
 #[command(name = "hydra")]
 #[command(about = "A tool for VM live-migration", long_about = None)]
 #[command(subcommand_required = false)]
@@ -62,7 +62,7 @@ async fn main() {
             info!("Migration starting... Requesting new machine to be started...");
             let start = Instant::now();
             let ip_address = create_instance_with_image().await;
-            add_ssh_fingerprint_to_known_hosts(ip_address).unwrap();
+            // TODO: Accept the fingerprint of the other machine
             connection.migrate(Some(format!("qemu+ssh://{}/session", ip_address)), domains);
             let duration = start.elapsed();
             info!(
