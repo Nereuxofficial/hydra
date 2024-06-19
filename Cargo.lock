@@ -1092,6 +1092,7 @@ dependencies = [
  "rand 0.8.5",
  "reqwest 0.12.4",
  "russh",
+ "russh-keys",
  "serde_json",
  "tokio",
  "tracing",

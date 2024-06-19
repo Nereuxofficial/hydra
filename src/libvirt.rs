@@ -39,7 +39,8 @@ impl QemuConnection {
 
         for dom in domains {
             // TODO: Either use VIR_MIGRATE_TUNNELED or VIR_MIGRATE_TLS for encryption
-            let flags = sys::VIR_MIGRATE_LIVE | sys::VIR_MIGRATE_PEER2PEER;
+            let flags =
+                sys::VIR_MIGRATE_LIVE | sys::VIR_MIGRATE_TUNNELLED | sys::VIR_MIGRATE_PEER2PEER;
             if dom
                 .migrate(&self.connection, flags, dst_uri.as_deref().unwrap(), 0)
                 .is_ok()
