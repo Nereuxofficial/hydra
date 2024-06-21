@@ -1,17 +1,14 @@
 use async_trait::async_trait;
-use reqwest::Client as HttpClient;
 use russh::client;
 use russh_keys::key::PublicKey;
 use russh_keys::{load_secret_key, PublicKeyBase64};
 use std::env;
-use std::fmt::Display;
 use std::fs::read_to_string;
 use std::io::Read;
 use std::io::Write;
 use std::net::IpAddr;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
-use tokio::net::ToSocketAddrs;
 
 /// Adds the ssh fingerprint to known_hosts to pass the fingerprint verification securely. The new
 /// instance will have the same fingerprint as ours because it is built from the machine image of
@@ -67,19 +64,34 @@ fn get_home() -> String {
     env::var("HOME").expect("HOME not found in environment. Please provide a home path")
 }
 
-struct Client {}
+struct SharedClient(Arc<Mutex<Client>>);
+
+struct Client {
+    public_key: OnceLock<PublicKey>,
+}
+
+impl Client {
+    pub fn get_public_key(&self) -> PublicKey {
+        self.public_key.get().unwrap().clone()
+    }
+}
 
 #[async_trait]
-impl client::Handler for Client {
+impl client::Handler for SharedClient {
     type Error = russh::Error;
 
     async fn check_server_key(&mut self, public_key: &PublicKey) -> Result<bool, Self::Error> {
-        println!("Server public key: {:?}", public_key.clone());
+        self.0
+            .lock()
+            .unwrap()
+            .public_key
+            .set(public_key.clone())
+            .unwrap();
         Ok(true)
     }
 }
 
-pub async fn get_ssh_key_from_ip<I: ToSocketAddrs>(ip_addr: I) {
+pub async fn get_ssh_key_from_ip(ip_addr: IpAddr) {
     let key_pair = get_key_paths()
         .into_iter()
         // It is expected that the key has no password. TODO: Allow passing a password
@@ -90,11 +102,20 @@ pub async fn get_ssh_key_from_ip<I: ToSocketAddrs>(ip_addr: I) {
         inactivity_timeout: Some(Duration::from_millis(500)),
         ..Default::default()
     };
-    let mut session = client::connect(Arc::new(config), ip_addr, Client {})
+    let client = Arc::new(Mutex::new(Client {
+        public_key: OnceLock::new(),
+    }));
+    let shared_client = SharedClient(client.clone());
+    let mut session = client::connect(Arc::new(config), (ip_addr, 22), shared_client)
         .await
         .unwrap();
     session
         .authenticate_publickey(env::var("USER").unwrap(), Arc::new(key_pair))
         .await
         .unwrap();
+    add_ssh_fingerprint_to_known_hosts(
+        ip_addr,
+        client.lock().unwrap().public_key.get().unwrap().clone(),
+    )
+    .unwrap();
 }
