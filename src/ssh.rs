@@ -55,7 +55,7 @@ pub fn get_ssh_key() -> String {
 fn get_key_paths() -> Vec<String> {
     let home_path = get_home();
     ["/.ssh/id_rsa", "/.ssh/id_ed25519"]
-        .map(|path| format!("{home_path}/{path}"))
+        .map(|path| format!("{home_path}{path}"))
         .into_iter()
         .collect()
 }
@@ -112,4 +112,26 @@ pub async fn get_ssh_key_from_ip(ip_addr: IpAddr) {
         client.lock().unwrap().public_key.get().unwrap().clone(),
     )
     .unwrap();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs::File;
+
+    #[test]
+    fn get_secret_key() {
+        let key_pair = get_key_paths()
+            .into_iter()
+            // It is expected that the key has no password. TODO: Allow passing a password
+            .find_map(|p| load_secret_key(p, None).ok())
+            .unwrap();
+    }
+
+    #[test]
+    fn test_get_key_paths() {
+        let paths = get_key_paths();
+        println!("{:?}", paths);
+        assert!(paths.iter().any(|p| File::open(p).is_ok()));
+    }
 }
