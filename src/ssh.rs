@@ -100,6 +100,7 @@ pub async fn get_ssh_key_from_ip(ip_addr: IpAddr) {
         public_key: OnceLock::new(),
     }));
     let shared_client = SharedClient(client.clone());
+    println!("Trying to connect to the new instance...");
     let mut session = client::connect(Arc::new(config), (ip_addr, 22), shared_client)
         .await
         .unwrap();
