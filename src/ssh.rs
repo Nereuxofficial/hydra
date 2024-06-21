@@ -70,12 +70,6 @@ struct Client {
     public_key: OnceLock<PublicKey>,
 }
 
-impl Client {
-    pub fn get_public_key(&self) -> PublicKey {
-        self.public_key.get().unwrap().clone()
-    }
-}
-
 #[async_trait]
 impl client::Handler for SharedClient {
     type Error = russh::Error;
