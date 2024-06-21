@@ -1,7 +1,8 @@
-use reqwest::Client;
+use async_trait::async_trait;
+use reqwest::Client as HttpClient;
 use russh::client;
 use russh_keys::key::PublicKey;
-use russh_keys::load_secret_key;
+use russh_keys::{load_secret_key, PublicKeyBase64};
 use std::env;
 use std::fmt::Display;
 use std::fs::read_to_string;
@@ -27,11 +28,15 @@ pub fn add_ssh_fingerprint_to_known_hosts(
         .open(format!("{}/.ssh/known_hosts", get_home()))?;
     let mut contents = String::new();
     known_hosts.read_to_string(&mut contents)?;
-    unimplemented!("Need to convert the public key to the format of known_hosts")
-    let parts = public_key.split_whitespace().collect::<Vec<&str>>();
+
     // Since the format is different we need to convert it to the format of known_hosts
     // which is: "ip_address type public_key"
-    let fingerprint = format!("{} {} {}", ip_address, parts[0], parts[1]);
+    let fingerprint = format!(
+        "{} {} {}",
+        ip_address,
+        public_key.name(),
+        public_key.public_key_base64()
+    );
     if contents.contains(&fingerprint) {
         return Ok(());
     }
@@ -62,16 +67,14 @@ fn get_home() -> String {
     env::var("HOME").expect("HOME not found in environment. Please provide a home path")
 }
 
-struct Handler;
+struct Client {}
 
-impl client::Handler for Handler {
+#[async_trait]
+impl client::Handler for Client {
     type Error = russh::Error;
 
-    async fn check_server_key(
-        &mut self,
-        server_public_key: PublicKey,
-    ) -> Result<bool, Self::Error> {
-        println!("Server public key: {:?}", server_public_key.clone());
+    async fn check_server_key(&mut self, public_key: &PublicKey) -> Result<bool, Self::Error> {
+        println!("Server public key: {:?}", public_key.clone());
         Ok(true)
     }
 }
@@ -87,7 +90,11 @@ pub async fn get_ssh_key_from_ip<I: ToSocketAddrs>(ip_addr: I) {
         inactivity_timeout: Some(Duration::from_millis(500)),
         ..Default::default()
     };
-    let session = client::connect(Arc::new(config), ip_addr, Handler)
+    let mut session = client::connect(Arc::new(config), ip_addr, Client {})
+        .await
+        .unwrap();
+    session
+        .authenticate_publickey(env::var("USER").unwrap(), Arc::new(key_pair))
         .await
         .unwrap();
 }
