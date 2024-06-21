@@ -62,14 +62,18 @@ async fn main() {
             info!("Migration starting... Requesting new machine to be started...");
             let start = Instant::now();
             let ip_address = create_instance_with_image().await;
+            println!(
+                "Created Instance. Time used {}s/30s",
+                start.elapsed().as_secs()
+            );
             get_ssh_key_from_ip(ip_address).await;
+            println!(
+                "known_hosts entry added. Time used: {}s/30s",
+                start.elapsed().as_secs()
+            );
             connection.migrate(Some(format!("qemu+ssh://{}/session", ip_address)), domains);
             let duration = start.elapsed();
-            info!(
-                "Migration completed in {}s. Time left: {} seconds",
-                duration.as_secs(),
-                30 - duration.as_secs()
-            );
+            info!("Migration completed in {}s/30s", duration.as_secs(),);
         }
     }
 }
