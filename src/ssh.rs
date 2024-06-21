@@ -121,11 +121,14 @@ mod tests {
 
     #[test]
     fn get_secret_key() {
-        let key_pair = get_key_paths()
-            .into_iter()
-            // It is expected that the key has no password. TODO: Allow passing a password
-            .find_map(|p| load_secret_key(p, None).ok())
-            .unwrap();
+        let key_paths = get_key_paths();
+        for path in key_paths {
+            match load_secret_key(path, None) {
+                Ok(p) => return,
+                Err(e) => println!("{:?}", e),
+            }
+        }
+        panic!("No key found");
     }
 
     #[test]
