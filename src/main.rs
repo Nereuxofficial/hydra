@@ -43,6 +43,8 @@ enum Commands {
 
 #[tokio::main]
 async fn main() {
+    let mut last = Instant::now();
+    let start = Instant::now();
     dotenv().unwrap();
     tracing_subscriber::fmt::init();
     let args = Cli::parse();
@@ -61,20 +63,18 @@ async fn main() {
             let domains = connection.get_running_vms();
             assert!(!domains.is_empty(), "No running domains to migrate");
             info!("Migration starting... Requesting new machine to be started...");
-            let start = Instant::now();
+            println!("Startup: {}ms", last.elapsed().as_millis());
+            last = Instant::now();
             let ip_address = create_instance_with_image().await;
-            println!(
-                "Created Instance. Time used {}s/30s",
-                start.elapsed().as_secs()
-            );
+            println!("Instance Creation: {}ms", last.elapsed().as_millis());
+            last = Instant::now();
             get_ssh_key_from_ip(ip_address).await;
-            println!(
-                "known_hosts entry added. Time used: {}s/30s",
-                start.elapsed().as_secs()
-            );
+            println!("known_hosts: {}ms", last.elapsed().as_millis());
+            last = Instant::now();
             connection.migrate(Some(format!("qemu+ssh://{}/session", ip_address)), domains);
+            println!("Migration: {}ms", last.elapsed().as_millis());
             let duration = start.elapsed();
-            info!("Migration completed in {}s/30s", duration.as_secs(),);
+            info!("Migration completed in {}ms", duration.as_millis());
         }
     }
 }
