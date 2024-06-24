@@ -16,6 +16,7 @@ use gcloud_sdk::google_rest_apis::compute_v1::scheduling::ProvisioningModel;
 use gcloud_sdk::google_rest_apis::compute_v1::{Instance, Metadata, Scheduling};
 use gcloud_sdk::{TokenSourceType, GCP_DEFAULT_SCOPES};
 use rand::{thread_rng, Rng};
+use std::env;
 use std::fs::read_to_string;
 use std::net::{IpAddr, Ipv4Addr};
 use std::str::FromStr;
@@ -126,8 +127,10 @@ async fn create_instance_with_image() -> IpAddr {
     .unwrap()
     .items
     .unwrap();
-    // TODO: We need a way to provide one via env optimally
-    let machine_image = machine_images.first_mut().unwrap();
+    let machine_image = machine_images
+        .into_iter()
+        .find(|i| i.name == Some(env::var("MACHINE_IMAGE_NAME").unwrap()))
+        .unwrap();
     info!("Machine image: {:?}", machine_image.name.clone());
     let mut properties = machine_image.instance_properties.as_ref().unwrap().clone();
     // Edit the metadata to add our machine's ssh public key while preserving the previous ssh keys
