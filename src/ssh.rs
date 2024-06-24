@@ -93,7 +93,7 @@ pub async fn get_ssh_key_from_ip(ip_addr: IpAddr) {
         .unwrap();
     let config = client::Config {
         // The RTT in a datacenter should be relatively short
-        inactivity_timeout: Some(Duration::from_millis(500)),
+        inactivity_timeout: None,
         ..Default::default()
     };
     let client = Arc::new(Mutex::new(Client {
