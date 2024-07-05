@@ -8,7 +8,6 @@ use std::io::Read;
 use std::io::Write;
 use std::net::IpAddr;
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::Duration;
 
 /// Adds the ssh fingerprint to known_hosts to pass the fingerprint verification securely. The new
 /// instance will have the same fingerprint as ours because it is built from the machine image of
@@ -64,6 +63,7 @@ fn get_home() -> String {
     env::var("HOME").expect("HOME not found in environment. Please provide a home path")
 }
 
+#[derive(Clone)]
 struct SharedClient(Arc<Mutex<Client>>);
 
 struct Client {
@@ -92,7 +92,6 @@ pub async fn get_ssh_key_from_ip(ip_addr: IpAddr) {
         .find_map(|p| load_secret_key(p, None).ok())
         .unwrap();
     let config = client::Config {
-        // The RTT in a datacenter should be relatively short
         inactivity_timeout: None,
         ..Default::default()
     };
@@ -101,9 +100,17 @@ pub async fn get_ssh_key_from_ip(ip_addr: IpAddr) {
     }));
     let shared_client = SharedClient(client.clone());
     println!("Trying to connect to the new instance...");
-    let mut session = client::connect(Arc::new(config), (ip_addr, 22), shared_client)
-        .await
-        .unwrap();
+    let shared_config = Arc::new(config);
+    let try_connect =
+        || client::connect(shared_config.clone(), (ip_addr, 22), shared_client.clone());
+    let mut session = loop {
+        match try_connect().await {
+            Ok(s) => break s,
+            Err(e) => {
+                println!("Error connecting to the new instance: {:?}", e);
+            }
+        }
+    };
     session
         .authenticate_publickey(env::var("USER").unwrap(), Arc::new(key_pair))
         .await
