@@ -1,4 +1,4 @@
-use crate::ssh::{get_ssh_key, get_ssh_key_from_ip};
+use crate::ssh::get_ssh_key;
 use gcloud_sdk::google_rest_apis::compute_v1::configuration::Configuration;
 use gcloud_sdk::google_rest_apis::compute_v1::instances_api::{
     compute_instances_get, compute_instances_insert, ComputePeriodInstancesPeriodGetParams,
@@ -17,7 +17,6 @@ use std::env;
 use std::fs::read_to_string;
 use std::net::{IpAddr, Ipv4Addr};
 use std::str::FromStr;
-use std::time::Instant;
 use tracing::info;
 
 async fn get_zone() -> Result<String, reqwest::Error> {
@@ -99,10 +98,10 @@ pub async fn create_instance_with_image() -> IpAddr {
         .items
         .as_mut()
         .unwrap();
-    metadata_items.into_iter().for_each(|item| {
+    metadata_items.iter_mut().for_each(|item| {
         if item.key.as_ref().unwrap() == "ssh-keys" {
             let mut value = item.value.as_ref().unwrap().clone();
-            value.push_str("\n");
+            value.push('\n');
             value.push_str(get_ssh_key().as_str());
             item.value = Some(value);
         }
@@ -186,7 +185,7 @@ async fn get_ip_addr_of_instance(
     // Maybe we could also give back the instance
     let details = loop {
         let res = compute_instances_get(
-            &compute_v1_config,
+            compute_v1_config,
             ComputePeriodInstancesPeriodGetParams {
                 project: project.clone(),
                 zone: zone.clone(),
@@ -221,25 +220,20 @@ async fn get_ip_addr_of_instance(
     info!("Instance internal ip: {}", internal_ip_address);
     // Simultaneously we should also probably add our ssh key to the target machine to allow for migration
 
-    return IpAddr::V4(
+    IpAddr::V4(
         Ipv4Addr::from_str(&internal_ip_address)
             .unwrap_or_else(|_| panic!("Failed to parse ip address: {}", internal_ip_address)),
-    );
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::get_ssh_key_from_ip;
+    use crate::Instant;
     use dotenvy::dotenv;
-    use gcloud_sdk::{
-        google::cloud::billing::v1::cloud_catalog_client::CloudCatalogClient,
-        google_rest_apis::compute_v1::{
-            instances_api::ComputePeriodInstancesPeriodStartParams,
-            machine_types_api::compute_machine_types_aggregated_list,
-        },
-    };
+    use gcloud_sdk::google_rest_apis::compute_v1::instances_api::ComputePeriodInstancesPeriodStartParams;
     use reqwest::header::HeaderMap;
-    use serde_json::Value;
 
     #[tokio::test]
     async fn test_create_instance_using_image() {
@@ -248,7 +242,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_get_prices() {
+    async fn test_get_prices_gcp() {
         tracing_subscriber::fmt::init();
         dotenv().unwrap();
         let ic_api_key = std::env::var("INFRACOST_API_KEY").unwrap();

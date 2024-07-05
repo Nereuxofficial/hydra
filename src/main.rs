@@ -4,27 +4,10 @@ mod libvirt;
 mod ssh;
 
 use crate::libvirt::QemuConnection;
-use crate::ssh::{get_ssh_key, get_ssh_key_from_ip};
+use crate::ssh::get_ssh_key_from_ip;
 use clap::{Parser, Subcommand};
 use dotenvy::dotenv;
-use gcloud_sdk::google_rest_apis::compute_v1::instances_api::{
-    compute_instances_get, compute_instances_insert, ComputePeriodInstancesPeriodGetParams,
-    ComputePeriodInstancesPeriodInsertParams,
-};
-use gcloud_sdk::google_rest_apis::compute_v1::machine_images_api::{
-    compute_machine_images_list, ComputePeriodMachineImagesPeriodListParams,
-};
-use gcloud_sdk::google_rest_apis::compute_v1::scheduling::ProvisioningModel;
-use gcloud_sdk::google_rest_apis::compute_v1::{
-    AttachedDisk, AttachedDiskInitializeParams, Instance, Metadata, Scheduling,
-};
-use gcloud_sdk::{TokenSourceType, GCP_DEFAULT_SCOPES};
 use gcp::create_instance_with_image;
-use rand::{thread_rng, Rng};
-use std::env;
-use std::fs::read_to_string;
-use std::net::{IpAddr, Ipv4Addr};
-use std::str::FromStr;
 use std::time::Instant;
 use tracing::info;
 

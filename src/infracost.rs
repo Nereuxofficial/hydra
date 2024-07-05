@@ -1,7 +1,7 @@
 use std::env;
 
 use reqwest::header::HeaderMap;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
 struct Data {
@@ -55,7 +55,6 @@ where
 
 async fn get_machine_prices() {
     let ic_api_key = std::env::var("INFRACOST_API_KEY").unwrap();
-    let zone = env::var("ZONE").unwrap();
     let client = reqwest::Client::new();
     let mut headers = HeaderMap::new();
     headers.insert("X-Api-Key", ic_api_key.parse().unwrap());
@@ -70,12 +69,10 @@ async fn get_machine_prices() {
     let multiple_types = products.into_iter().filter(|p| {
         p.prices
             .iter()
-            .find(|price| price.purchase_option == InstanceType::OnDemand)
-            .is_some()
+            .any(|price| price.purchase_option == InstanceType::OnDemand)
             && p.prices
                 .iter()
-                .find(|price| price.purchase_option == InstanceType::Preemptible)
-                .is_some()
+                .any(|price| price.purchase_option == InstanceType::Preemptible)
     });
     for product in multiple_types {
         println!(
@@ -107,4 +104,7 @@ mod tests {
         dotenvy::dotenv().ok();
         get_machine_prices().await;
     }
+
+    #[tokio::test]
+    async fn test_infracost_aws() {}
 }
