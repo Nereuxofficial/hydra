@@ -1,5 +1,3 @@
-use std::env;
-
 use reqwest::header::HeaderMap;
 use serde::Deserialize;
 

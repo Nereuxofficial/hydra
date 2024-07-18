@@ -1,3 +1,4 @@
+use crate::instances::InstanceHandler;
 use crate::ssh::get_ssh_key;
 use gcloud_sdk::google_rest_apis::compute_v1::configuration::Configuration;
 use gcloud_sdk::google_rest_apis::compute_v1::instances_api::{

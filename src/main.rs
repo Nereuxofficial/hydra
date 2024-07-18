@@ -1,5 +1,8 @@
+mod aws;
+mod docker;
 mod gcp;
 mod infracost;
+mod instances;
 mod libvirt;
 mod ssh;
 
