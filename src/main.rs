@@ -2,17 +2,18 @@ mod aws;
 mod docker;
 mod gcp;
 mod infracost;
-mod instances;
+#[cfg(feature = "libvirt")]
 mod libvirt;
+mod migration;
+mod provider;
 mod ssh;
 
-use crate::libvirt::QemuConnection;
+use crate::aws::AWSInstanceHandler;
 use crate::ssh::get_ssh_key_from_ip;
+use aws::execute_upon_termination_notice;
 use clap::{Parser, Subcommand};
 use dotenvy::dotenv;
-use gcp::create_instance_with_image;
-use std::time::Instant;
-use tracing::info;
+use std::time::{Duration, Instant};
 
 ///  The CLI interface of hydra to allow for either only migrating or creating a new instance
 #[derive(Debug, Parser)]
@@ -34,38 +35,27 @@ enum Commands {
 
 #[tokio::main]
 async fn main() {
-    let mut last = Instant::now();
+    let last = Instant::now();
     let start = Instant::now();
     dotenv().unwrap();
     tracing_subscriber::fmt::init();
     let args = Cli::parse();
     match args.command {
-        Some(Commands::CreateInstance) => println!(
-            "Ip Address of new server: {}",
-            create_instance_with_image().await
-        ),
+        Some(Commands::CreateInstance) => todo!(),
         Some(Commands::Migrate { remote }) => {
-            let connection = QemuConnection::new();
-            let domains = connection.get_running_vms();
-            connection.migrate(Some(remote), domains);
+            todo!()
         }
         None => {
-            let connection = QemuConnection::new();
-            let domains = connection.get_running_vms();
-            assert!(!domains.is_empty(), "No running domains to migrate");
-            info!("Migration starting... Requesting new machine to be started...");
-            println!("Startup: {}ms", last.elapsed().as_millis());
-            last = Instant::now();
-            let ip_address = create_instance_with_image().await;
-            println!("Instance Creation: {}ms", last.elapsed().as_millis());
-            last = Instant::now();
-            get_ssh_key_from_ip(ip_address).await;
-            println!("known_hosts: {}ms", last.elapsed().as_millis());
-            last = Instant::now();
-            connection.migrate(Some(format!("qemu+ssh://{}/session", ip_address)), domains);
-            println!("Migration: {}ms", last.elapsed().as_millis());
-            let duration = start.elapsed();
-            info!("Migration completed in {}ms", duration.as_millis());
+            let instancehandler: &mut dyn provider::Provider = &mut AWSInstanceHandler::new().await;
+            instancehandler.wait_until_termination_signal().await;
+            let ip_addr = instancehandler
+                .start_instance(env!("INSTANCE_ID"))
+                .await
+                .unwrap();
+            let cr_backend: &mut dyn migration::Migration =
+                &mut docker::DockerBackend::new().unwrap();
+            cr_backend.checkpoint().unwrap();
+            cr_backend.migrate(ip_addr).unwrap();
         }
     }
 }
