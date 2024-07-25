@@ -1,7 +1,5 @@
 use color_eyre::Result;
-use futures::future::BoxFuture;
 use std::net::IpAddr;
-use std::pin::Pin;
 use std::time::Duration;
 
 #[async_trait::async_trait]

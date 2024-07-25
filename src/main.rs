@@ -10,12 +10,9 @@ mod ssh;
 
 use crate::aws::AWSInstanceHandler;
 use crate::provider::Provider;
-use crate::ssh::get_ssh_key_from_ip;
-use aws::wait_until_termination_notice;
 use clap::{Parser, Subcommand};
 use dotenvy::dotenv;
-use std::pin::pin;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 ///  The CLI interface of hydra to allow for either only migrating or creating a new instance
 #[derive(Debug, Parser)]
