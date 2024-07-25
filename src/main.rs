@@ -9,10 +9,12 @@ mod provider;
 mod ssh;
 
 use crate::aws::AWSInstanceHandler;
+use crate::provider::Provider;
 use crate::ssh::get_ssh_key_from_ip;
-use aws::execute_upon_termination_notice;
+use aws::wait_until_termination_notice;
 use clap::{Parser, Subcommand};
 use dotenvy::dotenv;
+use std::pin::pin;
 use std::time::{Duration, Instant};
 
 ///  The CLI interface of hydra to allow for either only migrating or creating a new instance
@@ -46,16 +48,20 @@ async fn main() {
             todo!()
         }
         None => {
-            let instancehandler: &mut dyn provider::Provider = &mut AWSInstanceHandler::new().await;
-            instancehandler.wait_until_termination_signal().await;
-            let ip_addr = instancehandler
-                .start_instance(env!("INSTANCE_ID"))
+            let instancehandler: Box<dyn provider::Provider> =
+                Box::new(AWSInstanceHandler::new().await);
+            let dur = instancehandler
+                .wait_until_termination_signal()
                 .await
                 .unwrap();
-            let cr_backend: &mut dyn migration::Migration =
-                &mut docker::DockerBackend::new().unwrap();
-            cr_backend.checkpoint().unwrap();
-            cr_backend.migrate(ip_addr).unwrap();
+            let ip_addr = instancehandler
+                .start_instance(std::env::var("INSTANCE_ID").unwrap())
+                .await
+                .unwrap();
+            let mut cr_backend: Box<dyn migration::Migration> =
+                Box::new(docker::DockerBackend::new().unwrap());
+            cr_backend.checkpoint().await.unwrap();
+            cr_backend.migrate(ip_addr).await.unwrap();
         }
     }
 }

@@ -4,8 +4,10 @@
 
 use crate::migration::Migration;
 use color_eyre::eyre::Result;
+use futures::future::BoxFuture;
 use rand::Rng;
 use rs_docker::Docker;
+use std::future::Future;
 use std::net::IpAddr;
 use std::path::PathBuf;
 
@@ -60,6 +62,7 @@ impl DockerBackend {
     }
 }
 
+#[async_trait::async_trait]
 impl Migration for DockerBackend {
     async fn checkpoint(&mut self) -> Result<()> {
         self.checkpoints = self.checkpoint_all_containers()?;
