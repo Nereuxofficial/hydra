@@ -18,29 +18,37 @@ impl AWSInstanceHandler {
     }
     pub async fn start_instance_by_id(&self, id: String) -> Result<IpAddr> {
         // start_instance has no unique errors to handle.
-        let res: StartInstancesOutput = self
+        let _res: StartInstancesOutput = self
             .client
             .start_instances()
             .instance_ids(&id)
             .send()
             .await?;
 
-        let ip_addr: IpAddr = self
-            .client
-            .describe_instances()
-            .instance_ids(&id)
-            .send()
-            .await?
-            .reservations()[0]
-            .instances()[0]
-            .network_interfaces()
-            .iter()
-            .next()
-            .unwrap()
-            .private_ip_address()
-            .expect("No private IP address found")
-            .parse()
-            .unwrap();
+        // Wait until the instance public ip is available
+        let ip_addr = loop {
+            let desc = self
+                .client
+                .describe_instances()
+                .instance_ids(&id)
+                .send()
+                .await?
+                .reservations
+                .expect("No reservations found");
+            let res = desc
+                .first()
+                .expect("Reservations empty. This should not be the case")
+                .instances
+                .as_ref()
+                .expect("No instances found. This should not be the case")
+                .first()
+                .expect("Instances empty. This should not be the case")
+                .public_ip_address
+                .as_ref();
+            if let Some(ip) = res {
+                break ip.parse().expect("Could not parse IP address");
+            }
+        };
         println!("Starting instance with IP: {}", ip_addr);
 
         Ok(ip_addr)
@@ -78,5 +86,30 @@ pub async fn wait_until_termination_notice() -> Result<Duration> {
         }
         // The requests should be every two seconds so we in the worst case we probably have 197 seconds to react to the termination notice.
         interval.tick().await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ssh::get_ssh_key_from_ip;
+    use dotenvy::dotenv;
+    use std::time::Instant;
+
+    #[tokio::test]
+    async fn test_instance_startup() {
+        let start = Instant::now();
+        dotenv().unwrap();
+        let handler = AWSInstanceHandler::new().await;
+        let ip_address = handler
+            .start_instance_by_id("i-0ed154fb115a44566".to_string())
+            .await
+            .expect("Could not start other instance");
+        println!("IP Address: {}", ip_address);
+        get_ssh_key_from_ip(ip_address).await;
+        println!(
+            "Time taken to start instance: {}s",
+            start.elapsed().as_secs()
+        );
     }
 }

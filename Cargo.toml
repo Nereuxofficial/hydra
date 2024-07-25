@@ -43,6 +43,7 @@ futures = "0.3.30"
 [features]
 default = []
 libvirt = ["virt"]
+mock_termination = []
 
 [profile.release]
 strip = true

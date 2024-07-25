@@ -5,11 +5,12 @@ mod infracost;
 #[cfg(feature = "libvirt")]
 mod libvirt;
 mod migration;
+mod mock_termination;
+use crate::mock_termination::MockTermination;
 mod provider;
 mod ssh;
 
 use crate::aws::AWSInstanceHandler;
-use crate::provider::Provider;
 use clap::{Parser, Subcommand};
 use dotenvy::dotenv;
 use std::time::Instant;
@@ -34,8 +35,6 @@ enum Commands {
 
 #[tokio::main]
 async fn main() {
-    let last = Instant::now();
-    let start = Instant::now();
     dotenv().unwrap();
     tracing_subscriber::fmt::init();
     let args = Cli::parse();
@@ -45,20 +44,31 @@ async fn main() {
             todo!()
         }
         None => {
-            let instancehandler: Box<dyn provider::Provider> =
-                Box::new(AWSInstanceHandler::new().await);
+            // TODO: Add support for GCP
+            let instancehandler: Box<dyn provider::Provider> = if cfg!(feature = "mock_termination")
+            {
+                Box::new(MockTermination::new(AWSInstanceHandler::new().await))
+            } else {
+                Box::new(AWSInstanceHandler::new().await)
+            };
+            let start = Instant::now();
             let dur = instancehandler
                 .wait_until_termination_signal()
                 .await
                 .unwrap();
             let ip_addr = instancehandler
-                .start_instance(std::env::var("INSTANCE_ID").unwrap())
+                .start_instance(std::env::var("INSTANCE_ID").expect("INSTANCE_ID not set"))
                 .await
                 .unwrap();
             let mut cr_backend: Box<dyn migration::Migration> =
                 Box::new(docker::DockerBackend::new().unwrap());
             cr_backend.checkpoint().await.unwrap();
             cr_backend.migrate(ip_addr).await.unwrap();
+            println!(
+                "Migration took: {}s/{}s",
+                start.elapsed().as_secs(),
+                dur.as_secs()
+            );
         }
     }
 }
