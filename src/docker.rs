@@ -4,10 +4,8 @@
 
 use crate::migration::Migration;
 use color_eyre::eyre::Result;
-use futures::future::BoxFuture;
 use rand::Rng;
 use rs_docker::Docker;
-use std::future::Future;
 use std::net::IpAddr;
 use std::path::PathBuf;
 

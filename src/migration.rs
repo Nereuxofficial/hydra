@@ -1,6 +1,4 @@
 use color_eyre::Result;
-use futures::future::BoxFuture;
-use std::future::Future;
 use std::net::IpAddr;
 
 #[async_trait::async_trait]

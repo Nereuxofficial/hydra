@@ -3,9 +3,7 @@ use aws_sdk_ec2::operation::start_instances::StartInstancesOutput;
 use aws_sdk_ec2::Client;
 use aws_types::SdkConfig;
 use color_eyre::eyre::Result;
-use futures::future::BoxFuture;
 use std::net::IpAddr;
-use std::pin::Pin;
 use std::time::Duration;
 
 pub struct AWSInstanceHandler {
