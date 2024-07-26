@@ -8,6 +8,7 @@ use rand::Rng;
 use rs_docker::Docker;
 use std::net::IpAddr;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Clone)]
 pub struct Checkpoint {
@@ -36,34 +37,47 @@ impl DockerBackend {
             checkpoints: vec![],
         })
     }
-    pub fn checkpoint_all_containers(&mut self) -> Result<Vec<Checkpoint>> {
+    pub async fn checkpoint_all_containers(&mut self) -> Result<Vec<Checkpoint>> {
         let docker = &mut self.client;
-        let containers = docker.get_containers(false).unwrap();
-        let mut rng = rand::thread_rng();
-        let results = containers
-            .iter()
-            .map(|container| {
-                let checkpoint_name: String = rng.gen::<u64>().to_string();
-                docker.create_checkpoint(
-                    &container.Id,
-                    &checkpoint_name,
-                    None::<PathBuf>,
-                    false,
-                )?;
-                Ok(Checkpoint {
-                    checkpoint_name,
-                    container_id: container.Id.clone(),
-                })
+        // Worklaround for spawning a seconds tokio runtime since rs-docker spawns a tokio runtime internally
+        let mut results = Arc::new(Mutex::new(vec![]));
+        std::thread::scope(|s| {
+            let mut a = results.clone();
+            s.spawn(move || {
+                let containers = docker.get_containers(false).unwrap();
+                let mut rng = rand::thread_rng();
+                a.lock().unwrap().append(
+                    &mut containers
+                        .iter()
+                        .map(|container| {
+                            let checkpoint_name: String = rng.gen::<u64>().to_string();
+                            docker.create_checkpoint(
+                                &container.Id,
+                                &checkpoint_name,
+                                None::<PathBuf>,
+                                false,
+                            )?;
+                            Ok(Checkpoint {
+                                checkpoint_name,
+                                container_id: container.Id.clone(),
+                            })
+                        })
+                        .collect::<Result<Vec<Checkpoint>>>()
+                        .unwrap(),
+                );
             })
-            .collect::<Result<Vec<Checkpoint>>>()?;
-        Ok(results)
+            .join()
+            .unwrap();
+        });
+        let cloned_res = results.lock().unwrap().clone();
+        Ok(cloned_res)
     }
 }
 
 #[async_trait::async_trait]
 impl Migration for DockerBackend {
     async fn checkpoint(&mut self) -> Result<()> {
-        self.checkpoints = self.checkpoint_all_containers()?;
+        self.checkpoints = self.checkpoint_all_containers().await?;
         Ok(())
     }
 

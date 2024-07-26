@@ -32,7 +32,7 @@ virt = { version = "0.3.1", optional = true }
 tonic = "0.11.0"
 serde = { version = "1.0.203", features = ["derive"] }
 aws-config = { version = "1.0.1", features = ["behavior-version-latest"] }
-aws-sdk-ec2 = { version = "1.3.0" }
+aws-sdk-ec2 = { version = "1.3.0", features = ["rustls"] }
 aws-types = { version = "1.0.1" }
 color-eyre = { version = "0.6.3" }
 rs-docker = { git = "https://gitlab.com/Nereuxofficial/rust-docker", branch = "cleanup", features = [
