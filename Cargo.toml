@@ -9,7 +9,6 @@ clap = { version = "4.5", features = ["derive"] }
 dotenvy = "0.15.7"
 gcloud-sdk = { version = "0.25.3", features = [
     "google-rest-compute-v1",
-    "tls-webpki-roots",
     "google-cloud-billing-budgets-v1beta1",
     "google-cloud-billing-budgets-v1",
     "google-cloud-billing-v1",
