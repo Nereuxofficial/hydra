@@ -14,7 +14,7 @@ gcloud-sdk = { version = "0.25.3", features = [
     "google-cloud-billing-v1",
     "google-api",
     "google-cloud-common",
-] }
+], optional = true }
 rand = "0.8.5"
 reqwest = { version = "0.12.5", features = [
     "rustls-tls",
@@ -36,7 +36,6 @@ color-eyre = { version = "0.6.3" }
 rs-docker = { git = "https://gitlab.com/Nereuxofficial/rust-docker", branch = "cleanup", features = [
     "experimental",
 ] }
-futures = "0.3.30"
 russh-sftp = "2.0.3"
 zip = { version = "2.1.5", features = ["zstd"] }
 walkdir = "2.5.0"
@@ -45,6 +44,7 @@ walkdir = "2.5.0"
 default = []
 libvirt = ["virt"]
 mock_termination = []
+gcp = ["gcloud-sdk"]
 
 [profile.release]
 strip = true

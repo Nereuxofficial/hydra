@@ -1614,7 +1614,6 @@ dependencies = [
  "clap",
  "color-eyre",
  "dotenvy",
- "futures",
  "gcloud-sdk",
  "rand",
  "reqwest",

@@ -1,5 +1,6 @@
 mod aws;
 mod docker;
+#[cfg(feature = "gcp")]
 mod gcp;
 mod infracost;
 #[cfg(feature = "libvirt")]
