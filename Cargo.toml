@@ -45,6 +45,3 @@ default = []
 libvirt = ["virt"]
 mock_termination = []
 gcp = ["gcloud-sdk"]
-
-[profile.release]
-strip = true

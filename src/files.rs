@@ -2,7 +2,7 @@
 
 use russh_sftp::client::SftpSession;
 use std::path::PathBuf;
-use tokio::io::{AsyncSeekExt, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
 
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) struct Entry {

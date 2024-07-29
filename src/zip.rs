@@ -45,7 +45,7 @@ where
         let path = entry.path();
         let name = path
             .strip_prefix(prefix)
-            .expect(format!("{:?} is not a prefix of {:?}", prefix, path).as_str());
+            .unwrap_or_else(|path| panic!("{:?} is not a prefix of {:?}", prefix, path));
         let path_as_string = name
             .to_str()
             .map(str::to_owned)

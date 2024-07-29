@@ -10,8 +10,9 @@ use rand::Rng;
 use rs_docker::Docker;
 use russh_sftp::client::SftpSession;
 use std::net::IpAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use tokio::fs;
 use tokio::io::AsyncWriteExt;
 
 #[derive(Debug, Clone)]
@@ -94,6 +95,20 @@ impl DockerBackend {
         let mut local_file = tokio::fs::File::open(dest_file).await?;
         tokio::io::copy(&mut local_file, &mut remote_file).await?;
         remote_file.flush().await?;
+        Ok(())
+    }
+
+    async fn restore_containers(&self, container_archive: &Path, dest: &Path) -> Result<()> {
+        let file_contents = fs::read(container_archive).await?;
+        let mut archive = zip::ZipArchive::new(file_contents).unwrap();
+        for i in 0..archive.len() {
+            let mut file = archive.by_index(i).unwrap();
+            let file_name = file.name();
+            let mut dest = fs::File::create(file_name).await?;
+            let file_path = format!("{}/{}", dest, file_name);
+            println!("Extracting: {}", file_path);
+            tokio::io::copy(&mut file, &file_path).await?;
+        }
         Ok(())
     }
 }
