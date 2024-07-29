@@ -7,7 +7,7 @@ edition = "2021"
 async-trait = "0.1.81"
 clap = { version = "4.5", features = ["derive"] }
 dotenvy = "0.15.7"
-gcloud-sdk = { git = "https://github.com/abdolence/gcloud-sdk-rs/", rev = "d010e1b6dcf5d8abafefa35498f6aaa41eef29e0", features = [
+gcloud-sdk = { version = "0.25.3", features = [
     "google-rest-compute-v1",
     "tls-webpki-roots",
     "google-cloud-billing-budgets-v1beta1",
