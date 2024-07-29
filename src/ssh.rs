@@ -1,5 +1,6 @@
 use async_trait::async_trait;
-use russh::client;
+use russh::client::Msg;
+use russh::{client, Channel};
 use russh_keys::key::PublicKey;
 use russh_keys::{load_secret_key, PublicKeyBase64};
 use std::env;
@@ -83,6 +84,45 @@ impl client::Handler for SharedClient {
             .unwrap();
         Ok(true)
     }
+}
+
+pub async fn get_ssh_session(ip_addr: &IpAddr) -> Result<Channel<Msg>, russh::Error> {
+    let key_pair = get_key_paths()
+        .into_iter()
+        // It is expected that the key has no password. TODO: Allow passing a password
+        .find_map(|p| load_secret_key(p, None).ok())
+        .unwrap();
+    let config = client::Config {
+        inactivity_timeout: None,
+        ..Default::default()
+    };
+    let client = Arc::new(Mutex::new(Client {
+        public_key: OnceLock::new(),
+    }));
+    let shared_client = SharedClient(client.clone());
+    println!("Trying to connect to the new instance...");
+    let shared_config = Arc::new(config);
+    let try_connect = || {
+        client::connect(
+            shared_config.clone(),
+            (ip_addr.clone(), 22),
+            shared_client.clone(),
+        )
+    };
+    let mut session = loop {
+        match try_connect().await {
+            Ok(s) => break s,
+            Err(e) => {
+                println!("Error connecting to the new instance: {:?}", e);
+            }
+        }
+    };
+    session
+        .authenticate_publickey(env::var("USER").unwrap(), Arc::new(key_pair))
+        .await
+        .unwrap();
+
+    session.channel_open_session().await
 }
 
 pub async fn get_ssh_key_from_ip(ip_addr: IpAddr) {

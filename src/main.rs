@@ -7,8 +7,10 @@ mod libvirt;
 mod migration;
 mod mock_termination;
 use crate::mock_termination::MockTermination;
+mod files;
 mod provider;
 mod ssh;
+mod zip;
 
 use crate::aws::AWSInstanceHandler;
 use clap::{Parser, Subcommand};
