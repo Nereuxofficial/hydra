@@ -6,12 +6,15 @@ mod gcp;
 mod libvirt;
 mod migration;
 mod mock_termination;
+
 use crate::mock_termination::MockTermination;
+use std::path::Path;
 mod provider;
 mod ssh;
 mod zip;
 
 use crate::aws::AWSInstanceHandler;
+use crate::docker::{Checkpoint, DockerBackend};
 use clap::{Parser, Subcommand};
 use dotenvy::dotenv;
 use std::time::Instant;
@@ -32,6 +35,8 @@ enum Commands {
     CreateInstance,
     #[command(arg_required_else_help = true)]
     Migrate { remote: String },
+    #[command(arg_required_else_help = true)]
+    Restore { file: String, checkpoints: String },
 }
 
 #[tokio::main]
@@ -43,6 +48,19 @@ async fn main() {
         Some(Commands::CreateInstance) => todo!(),
         Some(Commands::Migrate { remote }) => {
             todo!()
+        }
+        Some(Commands::Restore { file, checkpoints }) => {
+            let mut docker = DockerBackend::new().unwrap();
+            println!("Restoring containers from file: {}", file);
+            let checkpoints = serde_json::from_str(&checkpoints).expect("Invalid Checkpoint data");
+            docker
+                .restore_containers(
+                    Path::new(&file),
+                    Path::new("/var/lib/docker/containers"),
+                    checkpoints,
+                )
+                .await
+                .unwrap();
         }
         None => {
             // TODO: Add support for GCP
