@@ -3,18 +3,20 @@
 //! While this is not live migration per se, even live migration of VMs needs to pause the VM for a short period of time to copy the rest of the memory state
 
 use crate::migration::Migration;
-use crate::ssh::get_ssh_session;
+use crate::ssh::{call, get_ssh_session};
 use crate::zip::zip_dir;
 use color_eyre::eyre::Result;
 use rand::Rng;
 use rs_docker::Docker;
+use russh::client::Msg;
+use russh::{Channel, ChannelMsg};
 use russh_sftp::client::SftpSession;
 use serde::{Deserialize, Serialize};
-use std::fs;
 use std::net::IpAddr;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::{fs, thread};
 use tokio::io::AsyncWriteExt;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -81,7 +83,8 @@ impl DockerBackend {
     /// Broadly the restoration of the containers can be split into the following two steps:
     /// 1. Copy the checkpoint files to the target machine
     /// 2. Restore the containers on the target machine using either their docker socket or a cli command
-    async fn migrate_all_containers(&self, ip_addr: &IpAddr) -> Result<()> {
+    async fn migrate_all_containers(&mut self, ip_addr: &IpAddr) -> Result<()> {
+        self.checkpoints = self.checkpoint_all_containers().await?;
         // Connect to the other machine via ssh and continue our checkpoints there
         let ssh_session = get_ssh_session(ip_addr).await?;
         ssh_session.request_subsystem(true, "sftp").await?;
@@ -97,16 +100,14 @@ impl DockerBackend {
         let mut local_file = tokio::fs::File::open(dest_file).await?;
         tokio::io::copy(&mut local_file, &mut remote_file).await?;
         remote_file.flush().await?;
-        let new_ssh_session = get_ssh_session(ip_addr).await?;
-        new_ssh_session
-            .exec(
-                true,
-                format!(
-                    "./hydra restore {dest_file} {}",
-                    serde_json::to_string(&self.checkpoints).unwrap()
-                ),
-            )
-            .await?;
+        let mut new_ssh_session = get_ssh_session(ip_addr).await?;
+        let command = &format!(
+            "nohup sudo RUST_BACKTRACE=1 DOCKER_HOST=unix:///var/run/docker.sock ./hydra restore {dest_file} '{}' > output.txt & disown",
+            serde_json::to_string(&self.checkpoints).unwrap()
+        );
+        println!("Running command: {}", command);
+        let res = call(&mut new_ssh_session, command).await?;
+        println!("Got response to starting hydra on remote: {}", res);
         Ok(())
     }
 
@@ -116,37 +117,42 @@ impl DockerBackend {
         dest: &Path,
         containers: Vec<Checkpoint>,
     ) -> Result<()> {
-        let file = fs::File::open(container_archive)?;
-        let mut archive = zip::ZipArchive::new(file).unwrap();
-        let mut container_ids = vec![];
-        for i in 0..archive.len() {
-            let mut file = archive.by_index(i).unwrap();
-            let file_name = file.name();
-            let file_path = dest.join(file_name);
-            println!("Extracting: {}", file_path.to_str().unwrap());
-            if file.is_dir() {
-                let container_name = file.name().split("/").last().unwrap();
-                container_ids.push(container_name.to_string());
-                fs::create_dir_all(&file_path)?;
-            } else {
-                let mut dest = fs::File::create(&file_path)?;
-                std::io::copy(&mut file, &mut dest)?;
-            }
-            if let Some(mode) = file.unix_mode() {
-                fs::set_permissions(&file_path, fs::Permissions::from_mode(mode)).unwrap();
-            }
-        }
-        let res = containers
-            .iter()
-            .map(|checkpoint| {
-                self.client.start_container(
-                    &checkpoint.container_id,
-                    Some(checkpoint.checkpoint_name.clone()),
-                    None,
-                )
-            })
-            .collect::<Result<Vec<String>, std::io::Error>>()?;
-
+        thread::scope(|s| {
+            s.spawn(move || {
+                let file = fs::File::open(container_archive).unwrap();
+                let mut archive = zip::ZipArchive::new(file).unwrap();
+                let mut container_ids = vec![];
+                for i in 0..archive.len() {
+                    let mut file = archive.by_index(i).unwrap();
+                    let file_name = file.name();
+                    let file_path = dest.join(file_name);
+                    println!("Extracting: {}", file_path.to_str().unwrap());
+                    if file.is_dir() {
+                        let container_name = file.name().split("/").last().unwrap();
+                        container_ids.push(container_name.to_string());
+                        fs::create_dir_all(&file_path).unwrap();
+                    } else {
+                        let mut dest = fs::File::create(&file_path).unwrap();
+                        std::io::copy(&mut file, &mut dest).unwrap();
+                    }
+                    if let Some(mode) = file.unix_mode() {
+                        fs::set_permissions(&file_path, fs::Permissions::from_mode(mode)).unwrap();
+                    }
+                }
+                let res = containers
+                    .iter()
+                    .map(|checkpoint| {
+                        self.client.start_container(
+                            &checkpoint.container_id,
+                            Some(checkpoint.checkpoint_name.clone()),
+                            None,
+                        )
+                    })
+                    .collect::<Result<Vec<String>, std::io::Error>>()
+                    .unwrap();
+                println!("Created containers: {:?}", res);
+            });
+        });
         Ok(())
     }
 }
@@ -167,7 +173,6 @@ impl Migration for DockerBackend {
 mod tests {
     use super::*;
     use std::process::Command;
-    use std::thread::sleep;
     use std::time::Duration;
 
     #[tokio::test]
@@ -186,7 +191,7 @@ mod tests {
             .output()
             .unwrap();
         println!("{:?}", res);
-        sleep(Duration::from_secs(4));
+        tokio::time::sleep(Duration::from_secs(4)).await;
         assert!(docker
             .get_containers(false)
             .is_ok_and(|containers| !containers.is_empty()));

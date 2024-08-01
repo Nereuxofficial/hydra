@@ -14,7 +14,7 @@ mod ssh;
 mod zip;
 
 use crate::aws::AWSInstanceHandler;
-use crate::docker::{Checkpoint, DockerBackend};
+use crate::docker::DockerBackend;
 use clap::{Parser, Subcommand};
 use dotenvy::dotenv;
 use std::time::Instant;
@@ -53,6 +53,7 @@ async fn main() {
             let mut docker = DockerBackend::new().unwrap();
             println!("Restoring containers from file: {}", file);
             let checkpoints = serde_json::from_str(&checkpoints).expect("Invalid Checkpoint data");
+            println!("Trying to restore checkpoints: {:?}", checkpoints);
             docker
                 .restore_containers(
                     Path::new(&file),
@@ -70,11 +71,12 @@ async fn main() {
             } else {
                 Box::new(AWSInstanceHandler::new().await)
             };
-            let start = Instant::now();
+            println!("hydra initialized. Waiting for termination...");
             let dur = instancehandler
                 .wait_until_termination_signal()
                 .await
                 .unwrap();
+            let start = Instant::now();
             let ip_addr = instancehandler
                 .start_instance(std::env::var("INSTANCE_ID").expect("INSTANCE_ID not set"))
                 .await

@@ -1,7 +1,8 @@
 use async_trait::async_trait;
 use russh::client::Msg;
-use russh::{client, Channel};
+use russh::{client, Channel, ChannelMsg};
 use russh_keys::key::PublicKey;
+use russh_keys::key::SignatureHash::SHA2_256;
 use russh_keys::{load_secret_key, PublicKeyBase64};
 use std::env;
 use std::fs::read_to_string;
@@ -9,6 +10,7 @@ use std::io::Read;
 use std::io::Write;
 use std::net::IpAddr;
 use std::sync::{Arc, Mutex, OnceLock};
+use tokio::io::AsyncWriteExt;
 
 /// Adds the ssh fingerprint to known_hosts to pass the fingerprint verification securely. The new
 /// instance will have the same fingerprint as ours because it is built from the machine image of
@@ -86,12 +88,14 @@ impl client::Handler for SharedClient {
     }
 }
 
-pub async fn get_ssh_session(ip_addr: &IpAddr) -> Result<Channel<Msg>, russh::Error> {
-    let key_pair = get_key_paths()
-        .into_iter()
-        // It is expected that the key has no password. TODO: Allow passing a password
-        .find_map(|p| load_secret_key(p, None).ok())
-        .unwrap();
+pub async fn get_ssh_session(ip_addr: &IpAddr) -> color_eyre::Result<Channel<Msg>> {
+    let key_pair = Arc::new(
+        get_key_paths()
+            .into_iter()
+            // It is expected that the key has no password. TODO: Allow passing a password
+            .find_map(|p| load_secret_key(p, None).ok())
+            .unwrap(),
+    );
     let config = client::Config {
         inactivity_timeout: None,
         ..Default::default()
@@ -102,13 +106,8 @@ pub async fn get_ssh_session(ip_addr: &IpAddr) -> Result<Channel<Msg>, russh::Er
     let shared_client = SharedClient(client.clone());
     println!("Trying to connect to the new instance...");
     let shared_config = Arc::new(config);
-    let try_connect = || {
-        client::connect(
-            shared_config.clone(),
-            (ip_addr.clone(), 22),
-            shared_client.clone(),
-        )
-    };
+    let try_connect =
+        || client::connect(shared_config.clone(), (*ip_addr, 22), shared_client.clone());
     let mut session = loop {
         match try_connect().await {
             Ok(s) => break s,
@@ -117,15 +116,23 @@ pub async fn get_ssh_session(ip_addr: &IpAddr) -> Result<Channel<Msg>, russh::Er
             }
         }
     };
-    session
-        .authenticate_publickey(env::var("USER").unwrap(), Arc::new(key_pair))
+    let res = session
+        .authenticate_publickey(env::var("USER").unwrap(), key_pair.clone())
         .await
         .unwrap();
-
-    session.channel_open_session().await
+    if !res {
+        return Err(color_eyre::eyre::eyre!(
+            "Failed to authenticate via ssh with key {}",
+            key_pair.public_key_base64()
+        ));
+    }
+    let channel = session.channel_open_session().await?;
+    println!("Connected to the new instance");
+    Ok(channel)
 }
 
-pub async fn get_ssh_key_from_ip(ip_addr: IpAddr) {
+/// Gets the public ssh key from a new instance and adds it to known_hosts
+pub async fn add_ssh_pubkey_from_ip(ip_addr: IpAddr) {
     let key_pair = get_key_paths()
         .into_iter()
         // It is expected that the key has no password. TODO: Allow passing a password
@@ -160,6 +167,33 @@ pub async fn get_ssh_key_from_ip(ip_addr: IpAddr) {
         client.lock().unwrap().public_key.get().unwrap().clone(),
     )
     .unwrap();
+}
+pub async fn call(session: &mut Channel<Msg>, command: &str) -> color_eyre::Result<u32> {
+    session.exec(true, command).await?;
+
+    let mut code = None;
+    let mut stdout = tokio::io::stdout();
+
+    loop {
+        // There's an event available on the session channel
+        let Some(msg) = session.wait().await else {
+            break;
+        };
+        match msg {
+            // Write data to the terminal
+            ChannelMsg::Data { ref data } => {
+                stdout.write_all(data).await?;
+                stdout.flush().await?;
+            }
+            // The command has returned an exit code
+            ChannelMsg::ExitStatus { exit_status } => {
+                code = Some(exit_status);
+                // cannot leave the loop immediately, there might still be more data to receive
+            }
+            _ => {}
+        }
+    }
+    Ok(code.expect("program did not exit cleanly"))
 }
 
 #[cfg(test)]

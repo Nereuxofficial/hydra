@@ -1,10 +1,12 @@
 use crate::provider::Provider;
+use crate::ssh::add_ssh_pubkey_from_ip;
 use aws_sdk_ec2::operation::start_instances::StartInstancesOutput;
 use aws_sdk_ec2::Client;
 use aws_types::SdkConfig;
 use color_eyre::eyre::Result;
 use std::net::IpAddr;
-use std::time::Duration;
+use std::time::{Duration, Instant};
+use tracing::info;
 
 pub struct AWSInstanceHandler {
     client: Client,
@@ -17,6 +19,8 @@ impl AWSInstanceHandler {
         Self { client }
     }
     pub async fn start_instance_by_id(&self, id: String) -> Result<IpAddr> {
+        let start = Instant::now();
+        info!("Starting instance with ID: {}", id);
         // start_instance has no unique errors to handle.
         let _res: StartInstancesOutput = self
             .client
@@ -49,8 +53,11 @@ impl AWSInstanceHandler {
                 break ip.parse().expect("Could not parse IP address");
             }
         };
-        println!("Starting instance with IP: {}", ip_addr);
-
+        add_ssh_pubkey_from_ip(ip_addr).await;
+        info!(
+            "Time taken to start instance with {ip_addr}: {}s",
+            start.elapsed().as_secs()
+        );
         Ok(ip_addr)
     }
 }
@@ -92,7 +99,7 @@ pub async fn wait_until_termination_notice() -> Result<Duration> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ssh::get_ssh_key_from_ip;
+    use crate::ssh::add_ssh_pubkey_from_ip;
     use dotenvy::dotenv;
     use std::time::Instant;
 
@@ -106,7 +113,7 @@ mod tests {
             .await
             .expect("Could not start other instance");
         println!("IP Address: {}", ip_address);
-        get_ssh_key_from_ip(ip_address).await;
+        add_ssh_pubkey_from_ip(ip_address).await;
         println!(
             "Time taken to start instance: {}s",
             start.elapsed().as_secs()

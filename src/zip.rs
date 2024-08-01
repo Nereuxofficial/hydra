@@ -2,6 +2,7 @@ use color_eyre::eyre::ContextCompat;
 use std::fs::File;
 use std::io::{Read, Seek, Write};
 use std::path::Path;
+use tracing::debug;
 use walkdir::DirEntry;
 use walkdir::WalkDir;
 use zip::result::ZipError;
@@ -54,7 +55,7 @@ where
         // Write file or directory explicitly
         // Some unzip tools unzip files with directory paths correctly, some do not!
         if path.is_file() {
-            println!("adding file {path:?} as {name:?} ...");
+            debug!("adding file {path:?} as {name:?} ...");
             zip.start_file(path_as_string, options)?;
             let mut f = File::open(path)?;
 
@@ -64,7 +65,7 @@ where
         } else if !name.as_os_str().is_empty() {
             // Only if not root! Avoids path spec / warning
             // and mapname conversion failed error on unzip
-            println!("adding dir {path_as_string:?} as {name:?} ...");
+            debug!("adding dir {path_as_string:?} as {name:?} ...");
             zip.add_directory(path_as_string, options)?;
         }
     }

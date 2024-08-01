@@ -229,7 +229,7 @@ async fn get_ip_addr_of_instance(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ssh::get_ssh_key_from_ip;
+    use crate::ssh::add_ssh_pubkey_from_ip;
     use crate::Instant;
     use dotenvy::dotenv;
     use gcloud_sdk::google_rest_apis::compute_v1::instances_api::ComputePeriodInstancesPeriodStartParams;
@@ -291,7 +291,7 @@ mod tests {
         let ip_addr =
             get_ip_addr_of_instance(&compute_v1_config, instance_name.to_string(), zone, project)
                 .await;
-        get_ssh_key_from_ip(ip_addr).await;
+        add_ssh_pubkey_from_ip(ip_addr).await;
         println!("Time taken: {}s", start.elapsed().as_secs());
     }
 }
