@@ -2,7 +2,6 @@ use async_trait::async_trait;
 use russh::client::Msg;
 use russh::{client, Channel, ChannelMsg};
 use russh_keys::key::PublicKey;
-use russh_keys::key::SignatureHash::SHA2_256;
 use russh_keys::{load_secret_key, PublicKeyBase64};
 use std::env;
 use std::fs::read_to_string;

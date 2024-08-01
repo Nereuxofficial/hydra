@@ -40,6 +40,10 @@ russh-sftp = "2.0.3"
 zip = { version = "2.1.5", features = ["zstd"] }
 walkdir = "2.5.0"
 bollard = "0.17.0"
+futures = "0.3.30"
+tokio-stream = "0.1.15"
+bytes = "1.7.0"
+tokio-util = { version = "0.7.11", features = ["codec"] }
 
 [features]
 default = []

@@ -5,11 +5,15 @@
 use crate::migration::Migration;
 use crate::ssh::{call, get_ssh_session};
 use crate::zip::zip_dir;
-use color_eyre::eyre::Result;
+use bollard::container::{Config, ListContainersOptions};
+use bollard::image::{CommitContainerOptions, ImportImageOptions};
+use bollard::secret::{BuildInfo, Commit};
+use bytes::Bytes;
+use color_eyre::eyre::Result as EyreResult;
+use futures::future::join_all;
+use futures::Stream;
 use rand::Rng;
 use rs_docker::Docker;
-use russh::client::Msg;
-use russh::{Channel, ChannelMsg};
 use russh_sftp::client::SftpSession;
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
@@ -18,6 +22,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::{fs, thread};
 use tokio::io::AsyncWriteExt;
+use tokio_stream::StreamExt;
+use tokio_util::codec;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Checkpoint {
@@ -29,11 +35,13 @@ pub struct Checkpoint {
 
 pub struct DockerBackend {
     client: Docker,
+    /// This is sadly needed because the forked version of rs-docker doees not have modern commands, however bollard does not support checkpoints
+    async_client: bollard::Docker,
     checkpoints: Vec<Checkpoint>,
 }
 
 impl DockerBackend {
-    pub fn new() -> Result<Self> {
+    pub fn new() -> EyreResult<Self> {
         let docker = Docker::connect(&std::env::var("DOCKER_HOST").expect(
             "DOCKER_HOST not found in environment. Please add it with a correct target to .env(Typically: DOCKER_HOST=unix:///var/run/docker.sock"),
         )
@@ -41,9 +49,10 @@ impl DockerBackend {
         Ok(Self {
             client: docker,
             checkpoints: vec![],
+            async_client: bollard::Docker::connect_with_local_defaults().unwrap(),
         })
     }
-    pub async fn checkpoint_all_containers(&mut self) -> Result<Vec<Checkpoint>> {
+    pub async fn checkpoint_all_containers(&mut self) -> EyreResult<Vec<Checkpoint>> {
         let docker = &mut self.client;
         // TODO: Do this via an Atomicptr
         // Workaround for spawning a seconds tokio runtime since rs-docker spawns a tokio runtime internally
@@ -69,7 +78,7 @@ impl DockerBackend {
                                 container_id: container.Id.clone(),
                             })
                         })
-                        .collect::<Result<Vec<Checkpoint>>>()
+                        .collect::<EyreResult<Vec<Checkpoint>>>()
                         .unwrap(),
                 );
             })
@@ -80,10 +89,72 @@ impl DockerBackend {
         Ok(cloned_res)
     }
 
+    // Exports all containers by committing them and saving them to a tarball
+    async fn export_all_containers(&mut self) -> EyreResult<()> {
+        let running_containers = self
+            .async_client
+            .list_containers(None::<ListContainersOptions<&str>>)
+            .await?;
+        let futures = running_containers.into_iter().map(|c| {
+            self.async_client.commit_container(
+                CommitContainerOptions {
+                    container: c.id.clone().unwrap(),
+                    repo: c.id.unwrap(),
+                    tag: "checkpointedlatest".into(),
+                    comment: "Autocheckpointed by hydra".into(),
+                    author: "hydra".into(),
+                    pause: false,
+                    changes: None,
+                },
+                // TODO: Copy the config of the running container
+                Config::<String>::default(),
+            )
+        });
+        let commits = join_all(futures)
+            .await
+            .into_iter()
+            .collect::<Result<Vec<Commit>, bollard::errors::Error>>()?;
+        // Create the containers directory if it does not exist
+        tokio::fs::create_dir_all("containers").await?;
+        let mut tasks = vec![];
+        // Paralellise for each container
+        for commit in commits {
+            let acc = self.async_client.clone();
+            tasks.push(tokio::spawn(async move {
+                let data = acc
+                    .export_container(commit.id.clone().unwrap().as_str())
+                    .next()
+                    .await
+                    .unwrap()
+                    .unwrap();
+                tokio::fs::write(format!("containers/{}.tar", commit.id.unwrap()), data)
+                    .await
+                    .unwrap();
+            }));
+        }
+        join_all(tasks).await;
+
+        Ok(())
+    }
+
+    /// Loads a container from a tarball and returns the id of the loaded container
+    async fn load_container_from_file(&mut self, path: &PathBuf) -> EyreResult<String> {
+        let file = tokio::fs::File::open(path).await?;
+        let bytes_stream =
+            codec::FramedRead::new(file, codec::BytesCodec::new()).map(|r| r.unwrap().freeze());
+        let build_info = self
+            .async_client
+            .import_image_stream(ImportImageOptions { quiet: true }, bytes_stream, None)
+            .next()
+            .await
+            .unwrap()?;
+        Ok(build_info.id.unwrap())
+    }
+
     /// Broadly the restoration of the containers can be split into the following two steps:
     /// 1. Copy the checkpoint files to the target machine
     /// 2. Restore the containers on the target machine using either their docker socket or a cli command
-    async fn migrate_all_containers(&mut self, ip_addr: &IpAddr) -> Result<()> {
+    async fn migrate_all_containers(&mut self, ip_addr: &IpAddr) -> EyreResult<()> {
         self.checkpoints = self.checkpoint_all_containers().await?;
         // Connect to the other machine via ssh and continue our checkpoints there
         let ssh_session = get_ssh_session(ip_addr).await?;
@@ -116,7 +187,7 @@ impl DockerBackend {
         container_archive: &Path,
         dest: &Path,
         containers: Vec<Checkpoint>,
-    ) -> Result<()> {
+    ) -> EyreResult<()> {
         thread::scope(|s| {
             s.spawn(move || {
                 let file = fs::File::open(container_archive).unwrap();
@@ -159,12 +230,12 @@ impl DockerBackend {
 
 #[async_trait::async_trait]
 impl Migration for DockerBackend {
-    async fn checkpoint(&mut self) -> Result<()> {
+    async fn checkpoint(&mut self) -> EyreResult<()> {
         self.checkpoints = self.checkpoint_all_containers().await?;
         Ok(())
     }
 
-    async fn migrate(&mut self, ip_addr: IpAddr) -> Result<()> {
+    async fn migrate(&mut self, ip_addr: IpAddr) -> EyreResult<()> {
         self.migrate_all_containers(&ip_addr).await
     }
 }
