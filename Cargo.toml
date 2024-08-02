@@ -44,6 +44,7 @@ futures = "0.3.30"
 tokio-stream = "0.1.15"
 bytes = "1.7.0"
 tokio-util = { version = "0.7.11", features = ["codec"] }
+gen_passphrase = { version = "0.1.1", features = ["eff_short_2"] }
 
 [features]
 default = []

@@ -1437,6 +1437,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "gen_passphrase"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f20bae32fbc2a12fe5c574fc0a9834ba7f70abe51c8efe315dedc7a07fd58287"
+dependencies = [
+ "nanorand",
+]
+
+[[package]]
 name = "generic-array"
 version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1662,6 +1671,7 @@ dependencies = [
  "dotenvy",
  "futures",
  "gcloud-sdk",
+ "gen_passphrase",
  "rand",
  "reqwest",
  "rs-docker",
@@ -2090,6 +2100,12 @@ dependencies = [
  "wasi",
  "windows-sys 0.52.0",
 ]
+
+[[package]]
+name = "nanorand"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6a51313c5820b0b02bd422f4b44776fbf47961755c74ce64afc73bfad10226c3"
 
 [[package]]
 name = "nu-ansi-term"

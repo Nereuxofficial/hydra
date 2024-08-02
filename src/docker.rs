@@ -10,16 +10,19 @@ use bollard::image::{CommitContainerOptions, ImportImageOptions};
 use bollard::secret::Commit;
 use color_eyre::eyre::Result as EyreResult;
 use futures::future::join_all;
+use gen_passphrase::dictionary::EFF_SHORT_2;
 use rand::Rng;
 use rs_docker::Docker;
 use russh_sftp::client::SftpSession;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::net::IpAddr;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::{fs, thread};
 use tokio::io::AsyncWriteExt;
+use tokio::task::JoinHandle;
 use tokio_stream::StreamExt;
 use tokio_util::codec;
 
@@ -36,7 +39,13 @@ pub struct DockerBackend {
     /// This is sadly needed because the forked version of rs-docker doees not have modern commands, however bollard does not support checkpoints
     async_client: bollard::Docker,
     checkpoints: Vec<Checkpoint>,
+    container_map: BTreeMap<OldContainerName, NewContainerName>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, Ord, Eq, PartialEq, PartialOrd)]
+struct OldContainerName(String);
+#[derive(Debug, Clone, Serialize, Deserialize, Ord, Eq, PartialEq, PartialOrd)]
+struct NewContainerName(String);
 
 impl DockerBackend {
     pub fn new() -> EyreResult<Self> {
@@ -48,6 +57,7 @@ impl DockerBackend {
             client: docker,
             checkpoints: vec![],
             async_client: bollard::Docker::connect_with_local_defaults().unwrap(),
+            container_map: BTreeMap::new(),
         })
     }
     pub async fn checkpoint_all_containers(&mut self) -> EyreResult<Vec<Checkpoint>> {
@@ -97,7 +107,7 @@ impl DockerBackend {
             self.async_client.commit_container(
                 CommitContainerOptions {
                     container: c.id.clone().unwrap(),
-                    repo: c.id.unwrap(),
+                    repo: gen_passphrase::generate(&[EFF_SHORT_2], 2, None),
                     tag: "checkpointedlatest".into(),
                     comment: "Autocheckpointed by hydra".into(),
                     author: "hydra".into(),
@@ -135,18 +145,39 @@ impl DockerBackend {
         Ok(())
     }
 
-    /// Loads a container from a tarball and returns the id of the loaded container
-    async fn load_container_from_file(&mut self, path: &PathBuf) -> EyreResult<String> {
-        let file = tokio::fs::File::open(path).await?;
-        let bytes_stream =
-            codec::FramedRead::new(file, codec::BytesCodec::new()).map(|r| r.unwrap().freeze());
-        let build_info = self
-            .async_client
-            .import_image_stream(ImportImageOptions { quiet: true }, bytes_stream, None)
-            .next()
-            .await
-            .unwrap()?;
-        Ok(build_info.id.unwrap())
+    /// Restores all containers from their respective tarballs.
+    /// This assumes that the and *only* tarballs are in the containers directory relatively to the current directory
+    /// This also assumes that the tarballs are named <container_id>.tar
+    ///
+    /// This also creates a Map of the old container id to the new container id to allow for migration
+    async fn import_containers(&mut self) -> EyreResult<()> {
+        let container_files = fs::read_dir("containers")?;
+        let mut tasks: Vec<JoinHandle<EyreResult<(String, String)>>> = vec![];
+        for container_file in container_files {
+            let container_file = container_file?;
+            let path = container_file.path();
+            let container_id = path
+                .file_stem()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .to_string()
+                .clone();
+            let client_ref = self.async_client.clone();
+            tasks.push(tokio::spawn(async move {
+                let new_container_id = load_container_from_file(&client_ref, &path).await?;
+                Ok((container_id, new_container_id))
+            }));
+        }
+        let results = join_all(tasks).await;
+        for result in results {
+            let (old_container_id, new_container_id) = result??;
+            self.container_map.insert(
+                OldContainerName(old_container_id),
+                NewContainerName(new_container_id),
+            );
+        }
+        Ok(())
     }
 
     /// Broadly the restoration of the containers can be split into the following two steps:
@@ -225,7 +256,18 @@ impl DockerBackend {
         Ok(())
     }
 }
-
+/// Loads a container from a tarball and returns the id of the loaded container
+async fn load_container_from_file(client: &bollard::Docker, path: &PathBuf) -> EyreResult<String> {
+    let file = tokio::fs::File::open(path).await?;
+    let bytes_stream =
+        codec::FramedRead::new(file, codec::BytesCodec::new()).map(|r| r.unwrap().freeze());
+    let build_info = client
+        .import_image_stream(ImportImageOptions { quiet: true }, bytes_stream, None)
+        .next()
+        .await
+        .unwrap()?;
+    Ok(build_info.id.unwrap())
+}
 #[async_trait::async_trait]
 impl Migration for DockerBackend {
     async fn checkpoint(&mut self) -> EyreResult<()> {
@@ -278,5 +320,12 @@ mod tests {
 
         // Cleanup container
         docker.delete_container("looper1812").unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_export_all_containers() {
+        let mut docker_backend = DockerBackend::new().unwrap();
+        let res = docker_backend.export_all_containers().await.unwrap();
+        let dir = tokio::fs::read_dir("containers").await.unwrap();
     }
 }
