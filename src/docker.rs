@@ -25,6 +25,8 @@ use tokio::io::AsyncWriteExt;
 use tokio::task::JoinHandle;
 use tokio_stream::StreamExt;
 use tokio_util::codec;
+use tracing::debug;
+use tracing_subscriber::fmt::format;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Checkpoint {
@@ -103,38 +105,49 @@ impl DockerBackend {
             .async_client
             .list_containers(None::<ListContainersOptions<&str>>)
             .await?;
+        // TODO: Should we even commit running containers if we can just export them?
         let futures = running_containers.into_iter().map(|c| {
-            self.async_client.commit_container(
-                CommitContainerOptions {
-                    container: c.id.clone().unwrap(),
-                    repo: gen_passphrase::generate(&[EFF_SHORT_2], 2, None),
-                    tag: "checkpointedlatest".into(),
-                    comment: "Autocheckpointed by hydra".into(),
-                    author: "hydra".into(),
-                    pause: false,
-                    changes: None,
-                },
-                // TODO: Copy the config of the running container
-                Config::<String>::default(),
-            )
+            let client = self.async_client.clone();
+            async move {
+                Ok((
+                    c.id.clone().unwrap(),
+                    client
+                        .commit_container(
+                            CommitContainerOptions {
+                                container: c.id.clone().unwrap(),
+                                repo: gen_passphrase::generate(&[EFF_SHORT_2], 2, None),
+                                tag: "checkpointedlatest".into(),
+                                comment: "Autocheckpointed by hydra".into(),
+                                author: "hydra".into(),
+                                pause: false,
+                                changes: None,
+                            },
+                            // TODO: Copy the config of the running container
+                            Config::<String>::default(),
+                        )
+                        .await?,
+                ))
+            }
         });
         let commits = join_all(futures)
             .await
             .into_iter()
-            .collect::<Result<Vec<Commit>, bollard::errors::Error>>()?;
+            .collect::<Result<Vec<(String, Commit)>, bollard::errors::Error>>()?;
         // Create the containers directory if it does not exist
         tokio::fs::create_dir_all("containers").await?;
         let mut tasks = vec![];
         // Paralellise for each container
-        for commit in commits {
+        for (container_id, commit) in commits {
+            println!("Exporting container: {:?}", commit);
             let acc = self.async_client.clone();
             tasks.push(tokio::spawn(async move {
                 let data = acc
-                    .export_container(commit.id.clone().unwrap().as_str())
+                    .export_container(&container_id)
                     .next()
                     .await
                     .unwrap()
                     .unwrap();
+                // TODO: If we do not write the containers to disk we could write the data to the remote server, however it would hamper the ability to checkpoint the containers
                 tokio::fs::write(format!("containers/{}.tar", commit.id.unwrap()), data)
                     .await
                     .unwrap();
@@ -145,6 +158,31 @@ impl DockerBackend {
         Ok(())
     }
 
+    async fn transfer_containers(&mut self, ip_addr: &IpAddr) -> EyreResult<()> {
+        let ssh_session = get_ssh_session(ip_addr).await?;
+        ssh_session.request_subsystem(true, "sftp").await?;
+        let sftp = SftpSession::new(ssh_session.into_stream()).await?;
+        let container_files = fs::read_dir("containers")?;
+        let _res = sftp.create_dir("containers").await;
+        debug!("Result of creating the containers dir remotely: {_res:?}");
+        let res = futures::stream::iter(container_files.into_iter())
+            .then(|container_file| async {
+                if let Ok(container_file) = container_file {
+                    let path = container_file.path();
+                    let container_id = path.file_name().unwrap().to_str().unwrap();
+                    let mut remote_file =
+                        sftp.create(format!("containers/{}", container_id)).await?;
+                    remote_file.write_all(&tokio::fs::read(path).await?).await?;
+                    Ok(())
+                } else {
+                    debug!("Error reading container file");
+                    Ok(())
+                }
+            })
+            .collect::<Vec<EyreResult<()>>>()
+            .await;
+        Ok(())
+    }
     /// Restores all containers from their respective tarballs.
     /// This assumes that the and *only* tarballs are in the containers directory relatively to the current directory
     /// This also assumes that the tarballs are named <container_id>.tar
@@ -276,6 +314,8 @@ impl Migration for DockerBackend {
     }
 
     async fn migrate(&mut self, ip_addr: IpAddr) -> EyreResult<()> {
+        self.export_all_containers().await?;
+        self.transfer_containers(&ip_addr).await?;
         self.migrate_all_containers(&ip_addr).await
     }
 }
