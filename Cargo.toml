@@ -7,7 +7,7 @@ edition = "2021"
 async-trait = "0.1.81"
 clap = { version = "4.5", features = ["derive"] }
 dotenvy = "0.15.7"
-gcloud-sdk = { version = "0.25.3", features = [
+gcloud-sdk = { version = "0.25.4", features = [
     "google-rest-compute-v1",
     "google-cloud-billing-budgets-v1beta1",
     "google-cloud-billing-budgets-v1",
@@ -22,7 +22,7 @@ reqwest = { version = "0.12.5", features = [
 ], default-features = false }
 russh = "0.44.0"
 russh-keys = "0.44.0"
-serde_json = "1.0.121"
+serde_json = "1.0.122"
 tokio = { version = "1.39", features = ["full"] }
 tracing = "0.1.40"
 tracing-subscriber = "0.3.18"
@@ -42,7 +42,7 @@ walkdir = "2.5.0"
 bollard = "0.17.0"
 futures = "0.3.30"
 tokio-stream = "0.1.15"
-bytes = "1.7.0"
+bytes = "1.7.1"
 tokio-util = { version = "0.7.11", features = ["codec"] }
 gen_passphrase = { version = "0.1.1", features = ["eff_short_2"] }
 
