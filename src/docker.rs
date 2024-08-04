@@ -5,11 +5,12 @@
 use crate::migration::Migration;
 use crate::ssh::{call, get_ssh_session};
 use crate::zip::zip_dir;
-use bollard::container::{Config, ListContainersOptions};
+use bollard::container::{Config, CreateContainerOptions, ListContainersOptions};
 use bollard::image::{CommitContainerOptions, ImportImageOptions};
 use bollard::secret::Commit;
 use color_eyre::eyre::Result as EyreResult;
 use futures::future::join_all;
+use futures::stream;
 use gen_passphrase::dictionary::EFF_SHORT_2;
 use rand::Rng;
 use rs_docker::Docker;
@@ -22,7 +23,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::{fs, thread};
 use tokio::io::AsyncWriteExt;
-use tokio::task::JoinHandle;
+use tokio::task::{JoinError, JoinHandle};
 use tokio_stream::StreamExt;
 use tokio_util::codec;
 use tracing::debug;
@@ -41,7 +42,6 @@ pub struct DockerBackend {
     /// This is sadly needed because the forked version of rs-docker doees not have modern commands, however bollard does not support checkpoints
     async_client: bollard::Docker,
     checkpoints: Vec<Checkpoint>,
-    container_map: BTreeMap<OldContainerName, NewContainerName>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Ord, Eq, PartialEq, PartialOrd)]
@@ -59,7 +59,6 @@ impl DockerBackend {
             client: docker,
             checkpoints: vec![],
             async_client: bollard::Docker::connect_with_local_defaults().unwrap(),
-            container_map: BTreeMap::new(),
         })
     }
     pub async fn checkpoint_all_containers(&mut self) -> EyreResult<Vec<Checkpoint>> {
@@ -158,29 +157,20 @@ impl DockerBackend {
         Ok(())
     }
 
-    async fn transfer_containers(&mut self, ip_addr: &IpAddr) -> EyreResult<()> {
-        let ssh_session = get_ssh_session(ip_addr).await?;
+    async fn transfer_containers(&mut self, ip_addr: IpAddr) -> EyreResult<()> {
+        let ssh_session = get_ssh_session(&ip_addr).await?;
         ssh_session.request_subsystem(true, "sftp").await?;
         let sftp = SftpSession::new(ssh_session.into_stream()).await?;
         let container_files = fs::read_dir("containers")?;
         let _res = sftp.create_dir("containers").await;
         debug!("Result of creating the containers dir remotely: {_res:?}");
-        let res = futures::stream::iter(container_files.into_iter())
-            .then(|container_file| async {
-                if let Ok(container_file) = container_file {
-                    let path = container_file.path();
-                    let container_id = path.file_name().unwrap().to_str().unwrap();
-                    let mut remote_file =
-                        sftp.create(format!("containers/{}", container_id)).await?;
-                    remote_file.write_all(&tokio::fs::read(path).await?).await?;
-                    Ok(())
-                } else {
-                    debug!("Error reading container file");
-                    Ok(())
-                }
-            })
-            .collect::<Vec<EyreResult<()>>>()
-            .await;
+        for container_file in container_files {
+            let container_file = container_file?;
+            let path = container_file.path();
+            let container_id = path.file_name().unwrap().to_str().unwrap();
+            let mut remote_file = sftp.create(format!("containers/{}", container_id)).await?;
+            remote_file.write_all(&tokio::fs::read(path).await?).await?;
+        }
         Ok(())
     }
     /// Restores all containers from their respective tarballs.
@@ -188,7 +178,7 @@ impl DockerBackend {
     /// This also assumes that the tarballs are named <container_id>.tar
     ///
     /// This also creates a Map of the old container id to the new container id to allow for migration
-    async fn import_containers(&mut self) -> EyreResult<()> {
+    pub async fn import_containers(&mut self) -> EyreResult<()> {
         let container_files = fs::read_dir("containers")?;
         let mut tasks: Vec<JoinHandle<EyreResult<(String, String)>>> = vec![];
         for container_file in container_files {
@@ -203,28 +193,38 @@ impl DockerBackend {
                 .clone();
             let client_ref = self.async_client.clone();
             tasks.push(tokio::spawn(async move {
-                let new_container_id = load_container_from_file(&client_ref, &path).await?;
-                Ok((container_id, new_container_id))
+                let image_id = load_container_from_file(&client_ref, &path).await?;
+                Ok((container_id, image_id))
             }));
         }
-        let results = join_all(tasks).await;
-        for result in results {
-            let (old_container_id, new_container_id) = result??;
-            self.container_map.insert(
-                OldContainerName(old_container_id),
-                NewContainerName(new_container_id),
-            );
+        let image_ids = join_all(tasks)
+            .await
+            .into_iter()
+            .collect::<Result<EyreResult<Vec<_>>, JoinError>>()??;
+        for (container_id, image_id) in image_ids {
+            let options = Some(CreateContainerOptions {
+                name: container_id.clone(),
+                platform: None,
+            });
+            let config = Config {
+                image: Some(image_id.clone()),
+                // TODO: Do we need a command here if we restore a checkpoint?
+                ..Default::default()
+            };
+            self.async_client.create_container(options, config).await?;
         }
+        // FIXME: Actually create the containers using the docker API
+
         Ok(())
     }
 
     /// Broadly the restoration of the containers can be split into the following two steps:
     /// 1. Copy the checkpoint files to the target machine
     /// 2. Restore the containers on the target machine using either their docker socket or a cli command
-    async fn migrate_all_containers(&mut self, ip_addr: &IpAddr) -> EyreResult<()> {
+    async fn migrate_all_containers(&mut self, ip_addr: IpAddr) -> EyreResult<()> {
         self.checkpoints = self.checkpoint_all_containers().await?;
         // Connect to the other machine via ssh and continue our checkpoints there
-        let ssh_session = get_ssh_session(ip_addr).await?;
+        let ssh_session = get_ssh_session(&ip_addr).await?;
         ssh_session.request_subsystem(true, "sftp").await?;
         let sftp = SftpSession::new(ssh_session.into_stream()).await.unwrap();
         // Annoyingly we need root to access these files at least on the remote machine. See https://github.com/moby/moby/issues/37344
@@ -238,7 +238,7 @@ impl DockerBackend {
         let mut local_file = tokio::fs::File::open(dest_file).await?;
         tokio::io::copy(&mut local_file, &mut remote_file).await?;
         remote_file.flush().await?;
-        let mut new_ssh_session = get_ssh_session(ip_addr).await?;
+        let mut new_ssh_session = get_ssh_session(&ip_addr).await?;
         let command = &format!(
             "nohup sudo RUST_BACKTRACE=1 DOCKER_HOST=unix:///var/run/docker.sock ./hydra restore {dest_file} '{}' > output.txt & disown",
             serde_json::to_string(&self.checkpoints).unwrap()
@@ -315,8 +315,9 @@ impl Migration for DockerBackend {
 
     async fn migrate(&mut self, ip_addr: IpAddr) -> EyreResult<()> {
         self.export_all_containers().await?;
-        self.transfer_containers(&ip_addr).await?;
-        self.migrate_all_containers(&ip_addr).await
+        self.transfer_containers(ip_addr.clone()).await?;
+        self.migrate_all_containers(ip_addr).await?;
+        Ok(())
     }
 }
 

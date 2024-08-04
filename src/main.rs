@@ -18,6 +18,7 @@ use crate::docker::DockerBackend;
 use clap::{Parser, Subcommand};
 use dotenvy::dotenv;
 use std::time::Instant;
+use tracing::info;
 
 ///  The CLI interface of hydra to allow for either only migrating or creating a new instance
 #[derive(Debug, Parser)]
@@ -51,6 +52,8 @@ async fn main() {
         }
         Some(Commands::Restore { file, checkpoints }) => {
             let mut docker = DockerBackend::new().unwrap();
+            info!("Importing containers from ./checkpoints");
+            docker.import_containers().await.unwrap();
             println!("Restoring containers from file: {}", file);
             let checkpoints = serde_json::from_str(&checkpoints).expect("Invalid Checkpoint data");
             println!("Trying to restore checkpoints: {:?}", checkpoints);
