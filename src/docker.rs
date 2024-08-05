@@ -195,7 +195,7 @@ impl DockerBackend {
                 .clone();
             let client_ref = self.async_client.clone();
             tasks.push(tokio::spawn(async move {
-                let image_id = load_container_from_file(&client_ref, &path).await?;
+                let image_id = load_container_from_file(&client_ref, &path).await.unwrap();
                 Ok((container_id, image_id))
             }));
         }
@@ -313,6 +313,7 @@ async fn load_container_from_file(client: &bollard::Docker, path: &PathBuf) -> E
     let file = tokio::fs::File::open(path).await?;
     let bytes_stream =
         codec::FramedRead::new(file, codec::BytesCodec::new()).map(|r| r.unwrap().freeze());
+    debug!("Importing Image from file: {:?}", path);
     let build_info = client
         .import_image_stream(ImportImageOptions { quiet: false }, bytes_stream, None)
         .next()
@@ -329,7 +330,7 @@ impl Migration for DockerBackend {
 
     async fn migrate(&mut self, ip_addr: IpAddr) -> EyreResult<()> {
         self.export_all_containers().await?;
-        self.transfer_containers(ip_addr.clone()).await?;
+        self.transfer_containers(ip_addr).await?;
         self.migrate_all_containers(ip_addr).await?;
         Ok(())
     }
@@ -380,7 +381,14 @@ mod tests {
     #[tokio::test]
     async fn test_export_all_containers() {
         let mut docker_backend = DockerBackend::new().unwrap();
-        let res = docker_backend.export_all_containers().await.unwrap();
+        docker_backend.export_all_containers().await.unwrap();
         let dir = tokio::fs::read_dir("containers").await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_import_all_containers() {
+        tracing_subscriber::fmt::init();
+        let mut docker_backend = DockerBackend::new().unwrap();
+        docker_backend.import_containers().await.unwrap();
     }
 }
