@@ -26,6 +26,7 @@ use tokio::task::{JoinError, JoinHandle};
 use tokio_stream::StreamExt;
 use tokio_util::codec;
 use tracing::debug;
+use tracing::info;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Checkpoint {
@@ -140,14 +141,15 @@ impl DockerBackend {
             println!("Exporting container: {:?}", commit);
             let acc = self.async_client.clone();
             tasks.push(tokio::spawn(async move {
-                let data = acc
-                    .export_container(&container_id)
-                    .next()
-                    .await
-                    .unwrap()
-                    .unwrap();
+                let mut stream = acc.export_container(&container_id);
+                let mut data = vec![];
+                while let Some(chunk) = stream.next().await {
+                    let mut bytes_vec: Vec<u8> = chunk.unwrap().to_vec();
+                    data.append(&mut bytes_vec);
+                }
+                info!("Container size: {}", data.len());
                 // TODO: If we do not write the containers to disk we could write the data to the remote server, however it would hamper the ability to checkpoint the containers
-                tokio::fs::write(format!("containers/{}.tar", container_id), data)
+                tokio::fs::write(format!("containers/{}.tar.gz", container_id), data)
                     .await
                     .unwrap();
             }));
@@ -283,6 +285,7 @@ impl DockerBackend {
                         fs::set_permissions(&file_path, fs::Permissions::from_mode(mode)).unwrap();
                     }
                 }
+                // FIXME: Move checkpoint files to the correct location
                 let res = containers
                     .iter()
                     .map(|checkpoint| {
@@ -311,7 +314,7 @@ async fn load_container_from_file(client: &bollard::Docker, path: &PathBuf) -> E
     let bytes_stream =
         codec::FramedRead::new(file, codec::BytesCodec::new()).map(|r| r.unwrap().freeze());
     let build_info = client
-        .import_image_stream(ImportImageOptions { quiet: true }, bytes_stream, None)
+        .import_image_stream(ImportImageOptions { quiet: false }, bytes_stream, None)
         .next()
         .await
         .unwrap()?;

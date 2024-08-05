@@ -90,25 +90,26 @@ impl client::Handler for SharedClient {
 /// Creates an ssh channel.
 /// *WARNING*: Will loop infinitely until a connection is established.
 pub async fn get_ssh_session(ip_addr: &IpAddr) -> color_eyre::Result<Channel<Msg>> {
-    let key_pair = Arc::new(
-        get_key_paths()
-            .into_iter()
-            // It is expected that the key has no password. TODO: Allow passing a password
-            .find_map(|p| load_secret_key(p, None).ok())
-            .unwrap(),
-    );
-    let config = client::Config {
-        inactivity_timeout: None,
-        ..Default::default()
-    };
-    let client = Arc::new(Mutex::new(Client {
-        public_key: OnceLock::new(),
-    }));
-    let shared_client = SharedClient(client.clone());
-    println!("Trying to connect to the new instance...");
-    let shared_config = Arc::new(config);
     loop {
         let res: color_eyre::Result<Channel<Msg>> = {
+            let key_pair = Arc::new(
+                get_key_paths()
+                    .into_iter()
+                    // It is expected that the key has no password. TODO: Allow passing a password
+                    .find_map(|p| load_secret_key(p, None).ok())
+                    .unwrap(),
+            );
+            let config = client::Config {
+                inactivity_timeout: None,
+                ..Default::default()
+            };
+            let client = Arc::new(Mutex::new(Client {
+                public_key: OnceLock::new(),
+            }));
+            let shared_client = SharedClient(client.clone());
+            println!("Trying to connect to the new instance...");
+            let shared_config = Arc::new(config);
+
             let try_connect =
                 || client::connect(shared_config.clone(), (*ip_addr, 22), shared_client.clone());
             let mut session = loop {
@@ -124,10 +125,7 @@ pub async fn get_ssh_session(ip_addr: &IpAddr) -> color_eyre::Result<Channel<Msg
                 .await
                 .unwrap();
             if !res {
-                return Err(color_eyre::eyre::eyre!(
-                    "Failed to authenticate via ssh with key {}",
-                    key_pair.public_key_base64()
-                ));
+                continue;
             }
             let channel = session.channel_open_session().await?;
             println!("Connected to the new instance");
