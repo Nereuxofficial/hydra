@@ -10,7 +10,6 @@ use bollard::image::{CommitContainerOptions, ImportImageOptions};
 use bollard::secret::Commit;
 use color_eyre::eyre::Result as EyreResult;
 use futures::future::join_all;
-use futures::stream;
 use gen_passphrase::dictionary::EFF_SHORT_2;
 use rand::Rng;
 use rs_docker::Docker;
@@ -27,7 +26,6 @@ use tokio::task::{JoinError, JoinHandle};
 use tokio_stream::StreamExt;
 use tokio_util::codec;
 use tracing::debug;
-use tracing_subscriber::fmt::format;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Checkpoint {
@@ -39,9 +37,10 @@ pub struct Checkpoint {
 
 pub struct DockerBackend {
     client: Docker,
-    /// This is sadly needed because the forked version of rs-docker doees not have modern commands, however bollard does not support checkpoints
+    /// This is sadly needed because the forked version of rs-docker doees not support modern docker APIs, however bollard does not support checkpoints
     async_client: bollard::Docker,
     checkpoints: Vec<Checkpoint>,
+    container_names: BTreeMap<OldContainerName, NewContainerName>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Ord, Eq, PartialEq, PartialOrd)]
@@ -59,6 +58,7 @@ impl DockerBackend {
             client: docker,
             checkpoints: vec![],
             async_client: bollard::Docker::connect_with_local_defaults().unwrap(),
+            container_names: BTreeMap::new(),
         })
     }
     pub async fn checkpoint_all_containers(&mut self) -> EyreResult<Vec<Checkpoint>> {
@@ -147,7 +147,7 @@ impl DockerBackend {
                     .unwrap()
                     .unwrap();
                 // TODO: If we do not write the containers to disk we could write the data to the remote server, however it would hamper the ability to checkpoint the containers
-                tokio::fs::write(format!("containers/{}.tar", commit.id.unwrap()), data)
+                tokio::fs::write(format!("containers/{}.tar", container_id), data)
                     .await
                     .unwrap();
             }));
@@ -211,9 +211,15 @@ impl DockerBackend {
                 // TODO: Do we need a command here if we restore a checkpoint?
                 ..Default::default()
             };
-            self.async_client.create_container(options, config).await?;
+            let container = self.async_client.create_container(options, config).await?;
+            // Should not panic since container IDs are unique
+            self.container_names
+                .insert(
+                    OldContainerName(container_id),
+                    NewContainerName(container.id),
+                )
+                .unwrap();
         }
-        // FIXME: Actually create the containers using the docker API
 
         Ok(())
     }
@@ -281,7 +287,12 @@ impl DockerBackend {
                     .iter()
                     .map(|checkpoint| {
                         self.client.start_container(
-                            &checkpoint.container_id,
+                            &self
+                                .container_names
+                                .get(&OldContainerName(checkpoint.container_id.clone()))
+                                .unwrap()
+                                .0
+                                .clone(),
                             Some(checkpoint.checkpoint_name.clone()),
                             None,
                         )

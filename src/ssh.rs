@@ -87,6 +87,8 @@ impl client::Handler for SharedClient {
     }
 }
 
+/// Creates an ssh channel.
+/// *WARNING*: Will loop infinitely until a connection is established.
 pub async fn get_ssh_session(ip_addr: &IpAddr) -> color_eyre::Result<Channel<Msg>> {
     let key_pair = Arc::new(
         get_key_paths()
@@ -105,29 +107,36 @@ pub async fn get_ssh_session(ip_addr: &IpAddr) -> color_eyre::Result<Channel<Msg
     let shared_client = SharedClient(client.clone());
     println!("Trying to connect to the new instance...");
     let shared_config = Arc::new(config);
-    let try_connect =
-        || client::connect(shared_config.clone(), (*ip_addr, 22), shared_client.clone());
-    let mut session = loop {
-        match try_connect().await {
-            Ok(s) => break s,
-            Err(e) => {
-                println!("Error connecting to the new instance: {:?}", e);
+    loop {
+        let res: color_eyre::Result<Channel<Msg>> = {
+            let try_connect =
+                || client::connect(shared_config.clone(), (*ip_addr, 22), shared_client.clone());
+            let mut session = loop {
+                match try_connect().await {
+                    Ok(s) => break s,
+                    Err(e) => {
+                        println!("Error connecting to the new instance: {:?}", e);
+                    }
+                }
+            };
+            let res = session
+                .authenticate_publickey(env::var("USER").unwrap(), key_pair.clone())
+                .await
+                .unwrap();
+            if !res {
+                return Err(color_eyre::eyre::eyre!(
+                    "Failed to authenticate via ssh with key {}",
+                    key_pair.public_key_base64()
+                ));
             }
+            let channel = session.channel_open_session().await?;
+            println!("Connected to the new instance");
+            Ok(channel)
+        };
+        if let Ok(channel) = res {
+            return Ok(channel);
         }
-    };
-    let res = session
-        .authenticate_publickey(env::var("USER").unwrap(), key_pair.clone())
-        .await
-        .unwrap();
-    if !res {
-        return Err(color_eyre::eyre::eyre!(
-            "Failed to authenticate via ssh with key {}",
-            key_pair.public_key_base64()
-        ));
     }
-    let channel = session.channel_open_session().await?;
-    println!("Connected to the new instance");
-    Ok(channel)
 }
 
 /// Gets the public ssh key from a new instance and adds it to known_hosts
