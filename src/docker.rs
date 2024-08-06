@@ -9,6 +9,7 @@ use bollard::container::{Config, CreateContainerOptions, ListContainersOptions};
 use bollard::image::{CommitContainerOptions, ImportImageOptions};
 use bollard::secret::Commit;
 use color_eyre::eyre::Result as EyreResult;
+use color_eyre::owo_colors::OwoColorize;
 use futures::future::join_all;
 use gen_passphrase::dictionary::EFF_SHORT_2;
 use rand::Rng;
@@ -16,17 +17,20 @@ use rs_docker::Docker;
 use russh_sftp::client::SftpSession;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::fs::{read_dir, ReadDir};
 use std::net::IpAddr;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::{fs, thread};
 use tokio::io::AsyncWriteExt;
-use tokio::task::{JoinError, JoinHandle};
+use tokio::task::JoinError;
 use tokio_stream::StreamExt;
 use tokio_util::codec;
 use tracing::debug;
 use tracing::info;
+use tracing_subscriber::fmt::format;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Checkpoint {
@@ -182,9 +186,56 @@ impl DockerBackend {
     /// This also creates a Map of the old container id to the new container id to allow for migration
     pub async fn import_containers(&mut self) -> EyreResult<()> {
         let container_files = fs::read_dir("containers")?;
-        let mut tasks: Vec<JoinHandle<EyreResult<(String, String)>>> = vec![];
-        for container_file in container_files {
-            let container_file = container_file?;
+        let image_ids = self.import_via_command(container_files).await?;
+        info!("Imported containers: {:?}", image_ids);
+        for (container_id, image_id) in image_ids {
+            let options = Some(CreateContainerOptions {
+                name: container_id.clone(),
+                platform: None,
+            });
+            let config = Config {
+                image: Some(image_id.clone()),
+                cmd: Some(vec![
+                    "/bin/sh".to_string(),
+                    "-c".to_string(),
+                    "sleep".to_string(),
+                    "10".to_string(),
+                ]),
+                ..Default::default()
+            };
+            let container = self.async_client.create_container(options, config).await?;
+            // Should not panic since container IDs are unique
+            self.container_names.insert(
+                OldContainerName(container_id.split('.').next().unwrap().to_string()),
+                NewContainerName(container.id),
+            );
+        }
+
+        Ok(())
+    }
+
+    /// This imports the containers via the command line due to a bug in the API
+    async fn import_via_command(&self, dir: ReadDir) -> EyreResult<Vec<(String, String)>> {
+        let mut collection = vec![];
+        for file in dir {
+            let file = file.unwrap();
+            let path = file.path();
+            let container_id = path.file_stem().unwrap().to_str().unwrap().to_string();
+            let image_id = Command::new("docker").arg("import").arg(path).output()?;
+            let image_id = String::from_utf8(image_id.stdout)?
+                .trim_matches('\n')
+                .replace("sha256:", "");
+            collection.push((container_id, image_id));
+        }
+        Ok(collection)
+    }
+
+    #[allow(unused)]
+    // TODO: Switch to API when the API is fixed
+    async fn import_via_api(&self, dir: ReadDir) -> EyreResult<Vec<(String, String)>> {
+        let mut tasks = vec![];
+        for container_file in dir {
+            let container_file = container_file.unwrap();
             let path = container_file.path();
             let container_id = path
                 .file_stem()
@@ -199,31 +250,10 @@ impl DockerBackend {
                 Ok((container_id, image_id))
             }));
         }
-        let image_ids = join_all(tasks)
+        join_all(tasks)
             .await
             .into_iter()
-            .collect::<Result<EyreResult<Vec<_>>, JoinError>>()??;
-        for (container_id, image_id) in image_ids {
-            let options = Some(CreateContainerOptions {
-                name: container_id.clone(),
-                platform: None,
-            });
-            let config = Config {
-                image: Some(image_id.clone()),
-                // TODO: Do we need a command here if we restore a checkpoint?
-                ..Default::default()
-            };
-            let container = self.async_client.create_container(options, config).await?;
-            // Should not panic since container IDs are unique
-            self.container_names
-                .insert(
-                    OldContainerName(container_id),
-                    NewContainerName(container.id),
-                )
-                .unwrap();
-        }
-
-        Ok(())
+            .collect::<Result<EyreResult<Vec<_>>, JoinError>>()?
     }
 
     /// Broadly the restoration of the containers can be split into the following two steps:
@@ -240,6 +270,7 @@ impl DockerBackend {
         // Zip the directories in /var/lib/docker/containers/ migrate them and unzip them on the target machine
         // TODO: Maybe we can directly stream the file to the remote machine
         let src_dir = "/var/lib/docker/containers";
+        // FIXME: Transfer only checkpoints, not other files in the containers directory
         let dest_file = "./containers.zip";
         zip_dir(src_dir, dest_file)?;
         let mut remote_file = sftp.create(dest_file).await?;
@@ -248,7 +279,7 @@ impl DockerBackend {
         remote_file.flush().await?;
         let mut new_ssh_session = get_ssh_session(&ip_addr).await?;
         let command = &format!(
-            "nohup sudo RUST_BACKTRACE=1 DOCKER_HOST=unix:///var/run/docker.sock ./hydra restore {dest_file} '{}' > output.txt & disown",
+            "nohup sudo RUST_BACKTRACE=1 RUST_LOG=info DOCKER_HOST=unix:///var/run/docker.sock ./hydra restore {dest_file} '{}' > output.txt & disown",
             serde_json::to_string(&self.checkpoints).unwrap()
         );
         println!("Running command: {}", command);
@@ -285,28 +316,80 @@ impl DockerBackend {
                         fs::set_permissions(&file_path, fs::Permissions::from_mode(mode)).unwrap();
                     }
                 }
-                // FIXME: Move checkpoint files to the correct location
+
+                debug!("Full Containermap: {:?}", self.container_names);
                 let res = containers
                     .iter()
                     .map(|checkpoint| {
-                        self.client.start_container(
-                            &self
-                                .container_names
+                        // Move checkpoints into correct directory for new containers
+                        let src_dir = format!(
+                            "/var/lib/docker/containers/{}/checkpoints",
+                            checkpoint.container_id
+                        );
+                        let dest_dir = format!(
+                            "/var/lib/docker/containers/{}/",
+                            self.container_names
                                 .get(&OldContainerName(checkpoint.container_id.clone()))
                                 .unwrap()
                                 .0
                                 .clone(),
-                            Some(checkpoint.checkpoint_name.clone()),
-                            None,
-                        )
+                        );
+                        debug!("Moving checkpoints from {} to {}", src_dir, dest_dir);
+                        assert!(
+                            Path::new(&format!("{}/{}", src_dir, checkpoint.checkpoint_name))
+                                .exists(),
+                            "Checkpoint directory does not exist when it should"
+                        );
+                        assert!(
+                            read_dir(&src_dir).unwrap().next().is_some(),
+                            "Checkpoint directory empty when it should not be"
+                        );
+                        move_directory(&src_dir, &dest_dir);
+                        let mut found =
+                            format!("Searching {} in containermap", checkpoint.container_id);
+                        if self
+                            .container_names
+                            .get(&OldContainerName(checkpoint.container_id.clone()))
+                            .is_some()
+                        {
+                            found = found.green().to_string();
+                        } else {
+                            found = found.red().to_string();
+                        }
+                        debug!("{}", found);
+                        let container_name = self
+                            .container_names
+                            .get(&OldContainerName(checkpoint.container_id.clone()))
+                            .unwrap()
+                            .0
+                            .clone();
+                        debug!(
+                            "Starting container {} with checkpoint {}",
+                            container_name, checkpoint.checkpoint_name
+                        );
+                        std::process::Command::new("docker")
+                            .arg("start")
+                            .arg("--checkpoint")
+                            .arg(&checkpoint.checkpoint_name)
+                            .arg(&container_name)
+                            .output()
+                            .unwrap();
+                        Ok(())
                     })
-                    .collect::<Result<Vec<String>, std::io::Error>>()
+                    .collect::<Result<Vec<()>, std::io::Error>>()
                     .unwrap();
-                println!("Created containers: {:?}", res);
+                println!("Created {} containers", res.len());
             });
         });
         Ok(())
     }
+}
+fn move_directory(src: &str, dest: &str) {
+    std::process::Command::new("mv")
+        .arg(src)
+        .arg(dest)
+        .output()
+        .unwrap();
 }
 /// Loads a container from a tarball and returns the id of the loaded container
 async fn load_container_from_file(client: &bollard::Docker, path: &PathBuf) -> EyreResult<String> {
