@@ -89,7 +89,8 @@ pub async fn wait_until_termination_notice() -> Result<Duration> {
         println!("Termination Response Body: {}", res.text().await.unwrap());
         if status.is_success() {
             // TODO: Deserialize response to get termination countdown time. See https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/spot-instance-termination-notices.html
-            return Ok(Duration::from_secs(197));
+            info!("Termination notice received. Terminating in 117 seconds");
+            return Ok(Duration::from_secs(117));
         }
         // The requests should be every two seconds so we in the worst case we probably have 197 seconds to react to the termination notice.
         interval.tick().await;

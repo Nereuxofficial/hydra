@@ -1,3 +1,4 @@
+// TODO: Delete old container name folders from the target folders
 mod aws;
 mod docker;
 #[cfg(feature = "gcp")]

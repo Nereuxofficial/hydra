@@ -23,7 +23,7 @@ where
     }
 
     async fn wait_until_termination_signal(&self) -> Result<Duration> {
-        println!("Mocking termination signal... 197 seconds till termination");
-        Ok(Duration::from_secs(197))
+        println!("Mocking termination signal... 117 seconds till termination");
+        Ok(Duration::from_secs(117))
     }
 }
