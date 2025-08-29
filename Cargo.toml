@@ -25,7 +25,7 @@ russh-keys = "0.44.0"
 serde_json = "1.0.122"
 tokio = { version = "1.43", features = ["full"] }
 tracing = "0.1.40"
-tracing-subscriber = "0.3.18"
+tracing-subscriber = "0.3.20"
 virt = { version = "0.3.1", optional = true }
 # virt = { git = "https://gitlab.com/libvirt/libvirt-rust", rev = "3d2cc34fa75ecd6f6e8121cdc6c99687b62d2a4f", features = ["qemu"] }
 serde = { version = "1.0.203", features = ["derive"] }
